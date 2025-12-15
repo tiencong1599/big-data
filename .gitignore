@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+
+# Angular
+frontend/dist/
+frontend/.angular/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+*.local
+
+# Database
+*.db
+*.sqlite
+
+# Logs
+*.log
+logs/
+airflow/logs/
+
+# Video storage
+video_storage/*.mp4
+video_storage/*.avi
+video_storage/*.mov
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Spark
+checkpoint/
+metastore_db/
+derby.log
+
+# Airflow
+airflow.cfg
+airflow.db
+webserver_config.py
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Video files (keep structure, ignore content)
+!video_storage/.gitkeep

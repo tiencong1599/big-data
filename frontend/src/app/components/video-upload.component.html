@@ -1,0 +1,218 @@
+<div class="upload-container">
+  <button class="btn-upload" (click)="toggleUploadForm()">
+    {{ showUploadForm ? 'Cancel' : '+ Upload Video' }}
+  </button>
+
+  <div *ngIf="showUploadForm" class="upload-modal">
+    <div class="modal-overlay" (click)="toggleUploadForm()"></div>
+    
+    <!-- Flexible modal content - auto-sizes to video -->
+    <div class="modal-content" [class.modal-content-flexible]="videoUrl">
+      <div class="modal-header">
+        <h2>Upload Video</h2>
+        <button class="close-btn" (click)="toggleUploadForm()">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div *ngIf="error && !showResultPopup" class="error-message">
+          {{ error }}
+        </div>
+
+        <!-- Upload Progress Bar -->
+        <div class="progress-section" *ngIf="uploading || isCompressing">
+          <div class="progress-info">
+            <span class="progress-status">{{ uploadStatus }}</span>
+            <span class="progress-percentage">{{ uploadProgress }}%</span>
+          </div>
+          <div class="progress-bar-container">
+            <div class="progress-bar" [style.width.%]="uploadProgress">
+              <div class="progress-bar-animated"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 1: File Selection -->
+        <div class="form-group" *ngIf="!selectedFile">
+          <label for="video-file">
+            <span class="step-number">1</span>
+            Select Video File *
+          </label>
+          <input 
+            type="file" 
+            id="video-file"
+            accept="video/*"
+            (change)="onFileSelected($event)"
+            [disabled]="uploading">
+        </div>
+
+        <!-- Compact info after file selected -->
+        <div class="compact-info" *ngIf="selectedFile">
+          <div class="selected-file-info">
+            ✓ Selected: {{ selectedFile.name }}
+          </div>
+          
+          <div class="compact-name-group">
+            <label for="video-name">Video Name:</label>
+            <input 
+              type="text" 
+              id="video-name"
+              [(ngModel)]="videoName"
+              placeholder="Enter video name"
+              [disabled]="uploading">
+          </div>
+        </div>
+
+        <!-- Action Buttons - Compact -->
+        <div class="action-buttons-compact" *ngIf="selectedFile && videoName">
+          <button 
+            class="btn-action-small" 
+            (click)="startROISelection()"
+            [disabled]="uploading || isSelectingCalibration || videoLoadError"
+            [class.active]="isSelectingROI"
+            [class.completed]="roiCompleted">
+            {{ roiCompleted ? '✓' : '' }} ROI (4 points) *
+          </button>
+          <button 
+            class="btn-action-small" 
+            (click)="startCalibrationSelection()"
+            [disabled]="uploading || isSelectingROI || videoLoadError"
+            [class.active]="isSelectingCalibration"
+            [class.completed]="calibrationCompleted">
+            {{ calibrationCompleted ? '✓' : '' }} Calibrate (4 points) *
+          </button>
+          <button 
+            class="btn-clear-small" 
+            (click)="clearROI()"
+            *ngIf="roiPoints.length > 0"
+            [disabled]="uploading">
+            Clear ROI
+          </button>
+          <button 
+            class="btn-clear-small" 
+            (click)="clearCalibration()"
+            *ngIf="calibrationPoints.length > 0"
+            [disabled]="uploading">
+            Clear Cal
+          </button>
+        </div>
+
+        <!-- Video Preview - Native Resolution (Flexible Size) -->
+        <div class="video-preview-section-flexible" *ngIf="videoUrl">
+          <div class="instruction-text" *ngIf="isSelectingROI">
+            Click <strong>4 points</strong> for ROI rectangle ({{ roiPoints.length }}/4)
+          </div>
+          <div class="instruction-text" *ngIf="isSelectingCalibration">
+            Click <strong>4 points</strong> for calibration ({{ calibrationPoints.length }}/4)
+          </div>
+
+          <div class="video-container-flexible">
+            <video 
+              #videoPreview
+              [src]="videoUrl"
+              class="video-preview-native"
+              (loadedmetadata)="initializeCanvas()"
+              (loadeddata)="onVideoLoaded()"
+              (seeked)="onVideoSeeked()"
+              (error)="onVideoLoadError()"
+              preload="auto"
+              muted
+              crossorigin="anonymous">
+            </video>
+            <canvas 
+              #canvas
+              class="selection-canvas-native"
+              (click)="onCanvasClick($event)"
+              [class.selecting]="isSelectingROI || isSelectingCalibration"
+              *ngIf="!videoLoadError">
+            </canvas>
+            
+            <!-- Fallback for unsupported video formats -->
+            <div class="video-preview-placeholder" *ngIf="videoLoadError">
+              <div class="placeholder-content">
+                <div class="placeholder-icon">🎥</div>
+                <h3>Video Preview Not Available</h3>
+                <p>{{ selectedFile?.name }}</p>
+                <p class="placeholder-note">
+                  Browser cannot display this video format (MOV files often have this issue).<br>
+                  <strong>The video will still be uploaded and processed correctly.</strong><br>
+                  ROI and calibration selection are disabled - please use MP4 format for preview.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Calibration Coordinate Input Popup -->
+        <div class="popup-overlay" *ngIf="showCalibrationPopup" (click)="cancelCalibrationPoint()">
+          <div class="popup-content" (click)="$event.stopPropagation()">
+            <h3>Enter Real-World Coordinates</h3>
+            <p class="popup-instruction">Point {{ calibrationPoints.length + 1 }} of 4</p>
+            
+            <div class="popup-form">
+              <div class="popup-field">
+                <label>X (meters):</label>
+                <input 
+                  type="number" 
+                  step="0.1"
+                  [(ngModel)]="calibrationRealX" 
+                  placeholder="e.g., 0 or 8"
+                  autofocus>
+              </div>
+              
+              <div class="popup-field">
+                <label>Y (meters):</label>
+                <input 
+                  type="number" 
+                  step="0.1"
+                  [(ngModel)]="calibrationRealY" 
+                  placeholder="e.g., 0 or 3">
+              </div>
+            </div>
+
+            <div class="popup-actions">
+              <button class="btn-popup-cancel" (click)="cancelCalibrationPoint()">Cancel</button>
+              <button class="btn-popup-confirm" (click)="confirmCalibrationPoint()">Confirm</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Result Popup (Success/Error) -->
+        <div class="result-popup-overlay" *ngIf="showResultPopup" (click)="closeResultPopup()">
+          <div class="result-popup-content" 
+               [class.result-popup-success]="resultPopupType === 'success'"
+               [class.result-popup-error]="resultPopupType === 'error'"
+               (click)="$event.stopPropagation()">
+            <div class="result-popup-icon">
+              {{ resultPopupType === 'success' ? '✓' : '✕' }}
+            </div>
+            <h3>{{ resultPopupType === 'success' ? 'Upload Successful!' : 'Upload Failed' }}</h3>
+            <p>{{ resultPopupMessage }}</p>
+            <button class="btn-result-popup-close" (click)="closeResultPopup()">
+              {{ resultPopupType === 'success' ? 'OK' : 'Close' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Form Actions -->
+        <div class="form-actions">
+          <button 
+            class="btn-cancel" 
+            (click)="toggleUploadForm()"
+            [disabled]="uploading">
+            Cancel
+          </button>
+          <button 
+            class="btn-submit" 
+            (click)="uploadVideo()"
+            [disabled]="uploading || !selectedFile || !videoName || (!videoLoadError && (!roiCompleted || !calibrationCompleted))">
+            <span *ngIf="!uploading">Upload Video</span>
+            <span *ngIf="uploading">
+              <span class="spinner"></span>
+              Uploading...
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

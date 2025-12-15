@@ -1,0 +1,120 @@
+<div class="video-detail-container">
+  <div class="detail-header">
+    <h2>{{ video.name }}</h2>
+    <button class="close-btn" (click)="closePanel()">✕</button>
+  </div>
+
+  <div class="detail-content">
+    <!-- Video Information -->
+    <div class="info-section">
+      <h3>Video Information</h3>
+      
+      <div class="info-row">
+        <label>Name:</label>
+        <span>{{ video.name }}</span>
+      </div>
+
+      <div class="info-row">
+        <label>File Path:</label>
+        <span class="file-path">{{ video.file_path }}</span>
+      </div>
+
+      <div class="info-row">
+        <label>Created:</label>
+        <span>{{ video.created_at | date:'medium' }}</span>
+      </div>
+
+      <div class="info-row" *ngIf="video.roi">
+        <label>ROI (Region of Interest):</label>
+        <pre class="json-display">{{ formatJSON(video.roi) }}</pre>
+      </div>
+
+      <div class="info-row" *ngIf="video.calibrate_coordinates">
+        <label>Calibrate Coordinates:</label>
+        <pre class="json-display">{{ formatJSON(video.calibrate_coordinates) }}</pre>
+      </div>
+    </div>
+
+    <!-- Stream Section -->
+    <div class="stream-section">
+      <div class="stream-controls">
+        <button 
+          *ngIf="!isStreaming" 
+          class="btn-primary stream-btn"
+          (click)="startStream()">
+          ▶ Start Stream
+        </button>
+        
+        <button 
+          *ngIf="isStreaming" 
+          class="btn-danger stream-btn"
+          (click)="stopStream()">
+          ⏹ Stop Stream
+        </button>
+
+        <span *ngIf="isStreaming" class="streaming-indicator">
+          <span class="pulse"></span>
+          Streaming...
+        </span>
+      </div>
+
+      <div *ngIf="error" class="error-message">
+        {{ error }}
+      </div>
+
+      <!-- Video Display -->
+      <div class="video-display">
+        <div *ngIf="!currentFrame && !isStreaming" class="placeholder">
+          <div class="placeholder-icon">🎬</div>
+          <p>Click "Start Stream" to begin streaming video frames</p>
+        </div>
+
+        <div *ngIf="isStreaming && !currentFrame" class="loading-frame">
+          <div class="spinner"></div>
+          <p>Waiting for frames...</p>
+        </div>
+
+        <img 
+          *ngIf="currentFrame" 
+          [src]="currentFrame" 
+          alt="Video Frame"
+          class="video-frame">
+      </div>
+    </div>
+
+    <!-- Stats Section -->
+    <div class="stats-section">
+      <h3>Stats</h3>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Frames</div>
+          <div class="stat-value">1234</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">FPS</div>
+          <div class="stat-value">30</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Duration</div>
+          <div class="stat-value">12:34:56</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Vehicles Section -->
+    <div class="vehicles-section">
+      <h3>Vehicles</h3>
+      <div class="vehicle-list">
+        <div class="vehicle-card">
+          <div class="vehicle-header">
+            <div class="vehicle-id">ABC123</div>
+            <div class="vehicle-speed">60 km/h</div>
+          </div>
+          <div class="vehicle-bbox">
+            <div class="badge">High Speed</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

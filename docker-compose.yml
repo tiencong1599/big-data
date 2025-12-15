@@ -1,0 +1,207 @@
+services:
+  # Database
+  postgres:
+    image: postgres:15
+    container_name: video_streaming_db
+    environment:
+      POSTGRES_DB: video_streaming
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - video_streaming_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for real-time streaming (replaces Kafka)
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - video_streaming_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Airflow Services
+  airflow-init:
+    image: apache/airflow:2.8.0
+    container_name: airflow_init
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:postgres@postgres:5432/video_streaming
+      AIRFLOW__CORE__FERNET_KEY: 'Zp3fJ8K9mN2rQ5tV7wX0yB4cE6gH8iJ1kL3mN5oP7qR='
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - video_streaming_network
+    command: >
+      bash -c "
+      airflow db init &&
+      airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true
+      "
+
+  airflow-webserver:
+    image: apache/airflow:2.8.0
+    container_name: airflow_webserver
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:postgres@postgres:5432/video_streaming
+      AIRFLOW__CORE__FERNET_KEY: 'Zp3fJ8K9mN2rQ5tV7wX0yB4cE6gH8iJ1kL3mN5oP7qR='
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./backend:/opt/airflow/backend
+    command: airflow webserver
+    networks:
+      - video_streaming_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  airflow-scheduler:
+    image: apache/airflow:2.8.0
+    container_name: airflow_scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:postgres@postgres:5432/video_streaming
+      AIRFLOW__CORE__FERNET_KEY: 'Zp3fJ8K9mN2rQ5tV7wX0yB4cE6gH8iJ1kL3mN5oP7qR='
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./backend:/opt/airflow/backend
+    command: airflow scheduler
+    networks:
+      - video_streaming_network
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: video_streaming_backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8686:8686"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/video_streaming
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_VIDEO_STREAM: video-frames
+      REDIS_RESULT_STREAM: processed-frames
+      VIDEO_STORAGE_PATH: /app/video_storage
+      AIRFLOW_API_URL: http://airflow-webserver:8080/api/v1
+      AIRFLOW_USERNAME: admin
+      AIRFLOW_PASSWORD: admin
+      SERVER_PORT: 8686
+      ALLOWED_ORIGINS: http://localhost:4200,http://127.0.0.1:4200,http://localhost:80,http://127.0.0.1:80
+    volumes:
+      - video_storage:/app/video_storage
+      - ./backend:/app
+    networks:
+      - video_streaming_network
+    restart: unless-stopped
+
+  # Redis Consumer (replaces kafka-consumer)
+  redis-consumer:
+    build:
+      context: .
+      dockerfile: kafka-consumer/Dockerfile
+    container_name: redis_consumer
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/video_streaming
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_VIDEO_STREAM: video-frames
+      REDIS_RESULT_STREAM: processed-frames
+      BACKEND_URL: http://video_streaming_backend:8686
+    networks:
+      - video_streaming_network
+    restart: unless-stopped
+
+  # Spark Streaming with Redis
+  spark:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: spark_processor
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_INPUT_STREAM: video-frames
+      REDIS_OUTPUT_STREAM: processed-frames
+    networks:
+      - video_streaming_network
+    restart: unless-stopped
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: video_streaming_frontend
+    depends_on:
+      - backend
+    ports:
+      - "4200:80"
+    networks:
+      - video_streaming_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  video_storage:
+  redis_data:
+
+networks:
+  video_streaming_network:
+    driver: bridge

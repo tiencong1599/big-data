@@ -1,0 +1,2 @@
+# This file ensures the video_storage directory is tracked by git
+# Actual video files are ignored by .gitignore

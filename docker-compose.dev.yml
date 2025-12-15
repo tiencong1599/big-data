@@ -1,0 +1,42 @@
+# Docker Compose Override for Development
+# This file extends docker-compose.yml for development settings
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+version: '3.8'
+
+services:
+  # Backend with hot reload
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend:/app
+      - video_storage:/app/video_storage
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DEBUG=true
+    command: python -u app.py
+
+  # Frontend with development server
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "4200:4200"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/angular.json:/app/angular.json
+      - ./frontend/tsconfig.json:/app/tsconfig.json
+      - /app/node_modules
+    command: npm start
+
+  # Enable verbose logging for all services
+  kafka:
+    environment:
+      KAFKA_LOG4J_ROOT_LOGLEVEL: DEBUG
+
+  spark:
+    environment:
+      SPARK_LOG_LEVEL: DEBUG

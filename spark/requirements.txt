@@ -1,0 +1,15 @@
+# Redis Real-Time Video Frame Processor Requirements
+redis==5.0.1
+requests==2.31.0
+
+# Computer Vision & Deep Learning
+numpy==1.24.4
+opencv-python==4.8.1.78
+ultralytics>=8.0.0  # YOLOv8
+torch>=2.0.0
+torchvision>=0.15.0
+
+# DeepSORT Tracking
+deep-sort-realtime>=1.3.2
+scipy>=1.10.0
+scikit-learn>=1.2.0
