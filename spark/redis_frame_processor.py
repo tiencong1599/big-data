@@ -127,7 +127,7 @@ def process_frame(frame_data):
         print(f"  Frame {frame_number}: {len(detections)} detections from YOLO")
         
         # 2. Apply ROI filter if enabled (TEMPORARILY DISABLED FOR DEBUGGING)
-        if False and use_roi and roi_polygon and len(roi_polygon) > 0:
+        if use_roi and roi_polygon and len(roi_polygon) > 0:
             print(f"  Frame dimensions: {frame.shape[1]}x{frame.shape[0]} (WxH)")
             print(f"  ROI polygon: {roi_polygon}")
             
