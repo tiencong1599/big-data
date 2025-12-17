@@ -16,5 +16,3 @@ onnxruntime-gpu==1.19.2
 tensorrt>=8.6.1
 # PyCUDA để quản lý bộ nhớ GPU
 pycuda>=2022.1
-torch==2.1.2+cpu --index-url https://download.pytorch.org/whl/cpu
-torchvision==0.16.2+cpu --index-url https://download.pytorch.org/whl/cpu

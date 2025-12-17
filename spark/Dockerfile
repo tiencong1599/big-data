@@ -19,6 +19,11 @@ COPY spark/requirements.txt .
 # Đảm bảo requirements có: tensorrt, pycuda, onnxruntime-gpu
 RUN pip install --no-cache-dir -r requirements.txt
 
+RUN pip install --no-cache-dir \
+    torch==2.1.2+cpu \
+    torchvision==0.16.2+cpu \
+    --index-url https://download.pytorch.org/whl/cpu
+
 # Copy source code
 COPY spark/*.py ./
 
@@ -26,7 +31,7 @@ COPY spark/*.py ./
 COPY spark/converter.py ./
 
 # Copy ONNX model
-COPY yolov8n.onnx ./
+COPY spark/yolov8n.onnx ./
 
 # --- SETUP TỰ ĐỘNG HÓA ---
 # Copy entrypoint script
