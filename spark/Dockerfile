@@ -30,7 +30,7 @@ COPY yolov8n.onnx ./
 
 # --- SETUP TỰ ĐỘNG HÓA ---
 # Copy entrypoint script
-COPY entrypoint.sh ./
+COPY spark/entrypoint.sh ./
 # Cấp quyền thực thi (quan trọng!)
 RUN chmod +x entrypoint.sh
 
