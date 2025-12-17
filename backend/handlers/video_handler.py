@@ -11,6 +11,66 @@ from config.settings import VIDEO_STORAGE_PATH, ALLOWED_ORIGINS
 
 logger = logging.getLogger(__name__)
 
+def estimate_camera_matrix(video_width, video_height):
+    """
+    Estimate camera intrinsic matrix based on video resolution.
+    
+    For typical cameras, focal length in pixels ≈ image_width.
+    This is a reasonable approximation when actual calibration is not available.
+    
+    Args:
+        video_width (int): Video frame width in pixels
+        video_height (int): Video frame height in pixels
+    
+    Returns:
+        list: 3x3 camera matrix as nested list
+    """
+    # Estimate focal length (typical range: 0.8 to 1.2 times image width)
+    # Using 1.0 as a reasonable default for standard cameras
+    fx = video_width
+    fy = video_width  # Assume square pixels (fx ≈ fy)
+    
+    # Principal point is typically near the image center
+    cx = video_width / 2.0
+    cy = video_height / 2.0
+    
+    camera_matrix = [
+        [fx, 0.0, cx],
+        [0.0, fy, cy],
+        [0.0, 0.0, 1.0]
+    ]
+    
+    logger.info(f"Estimated camera matrix for {video_width}x{video_height}:")
+    logger.info(f"  fx={fx:.1f}, fy={fy:.1f}, cx={cx:.1f}, cy={cy:.1f}")
+    
+    return camera_matrix
+
+def get_video_resolution(video_path):
+    """
+    Extract video resolution from video file.
+    
+    Args:
+        video_path (str): Path to video file
+    
+    Returns:
+        tuple: (width, height) or (None, None) if failed
+    """
+    try:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            logger.warning(f"Could not open video file: {video_path}")
+            return None, None
+        
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
+        
+        logger.info(f"Video resolution: {width}x{height}")
+        return width, height
+    except Exception as e:
+        logger.error(f"Error reading video resolution: {str(e)}")
+        return None, None
+
 def compute_homography_from_calibration(calibrate_data):
     """
     Compute homography matrix from calibration coordinates.
@@ -150,6 +210,9 @@ class VideoUploadHandler(BaseHandler):
             camera_data = json.loads(camera_matrix) if camera_matrix else None
             fps_value = float(fps)
             
+            # Extract video resolution for camera matrix estimation
+            video_width, video_height = get_video_resolution(file_path)
+            
             # Compute homography matrix from calibration coordinates if provided
             if calibrate_data and not homography_data:
                 logger.info("Computing homography matrix from calibration coordinates...")
@@ -159,6 +222,12 @@ class VideoUploadHandler(BaseHandler):
                     logger.info("✓ Homography matrix computed and will be stored")
                 else:
                     logger.warning("✗ Failed to compute homography matrix - speed estimation will use identity matrix")
+            
+            # Estimate camera matrix if not provided
+            if not camera_data and video_width and video_height:
+                logger.info("Estimating camera matrix from video resolution...")
+                camera_data = estimate_camera_matrix(video_width, video_height)
+                logger.info("✓ Camera matrix estimated and will be stored")
             
             # Save to database
             logger.info("Saving to database...")
@@ -176,7 +245,7 @@ class VideoUploadHandler(BaseHandler):
                 db.add(video)
                 db.commit()
                 db.refresh(video)
-                
+
                 logger.info(f"Video saved to database with ID: {video.id}")
                 logger.info("=== Upload Completed Successfully ===")
                 

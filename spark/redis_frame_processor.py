@@ -102,23 +102,32 @@ def process_frame(frame_data):
         roi_polygon = frame_config.get('roi_polygon', [])
         homography_matrix = frame_config.get('homography_matrix')
         
+        # Get camera matrix if available
+        camera_matrix = frame_config.get('camera_matrix')
+        
         # Initialize speed estimator for this video if needed
         if video_id not in speed_estimators:
-            # SpeedEstimator only takes homography_matrix and fps
+            # Convert matrices from list to numpy array if needed
             if homography_matrix and use_homography:
-                # Convert homography matrix from list to numpy array
                 H = np.array(homography_matrix) if isinstance(homography_matrix, list) else homography_matrix
-                speed_estimators[video_id] = SpeedEstimator(
-                    homography_matrix=H,
-                    fps=fps
-                )
             else:
-                # Create dummy estimator with identity matrix if no homography
-                identity_matrix = np.eye(3)
-                speed_estimators[video_id] = SpeedEstimator(
-                    homography_matrix=identity_matrix,
-                    fps=fps
-                )
+                # Create identity matrix if no homography
+                H = np.eye(3)
+            
+            # Convert camera matrix if provided
+            K = None
+            if camera_matrix:
+                K = np.array(camera_matrix) if isinstance(camera_matrix, list) else camera_matrix
+                print(f"  Camera matrix provided for distortion correction")
+            
+            # Create speed estimator with optional camera matrix
+            # Note: distortion_coeffs are not yet stored in DB, using None for now
+            speed_estimators[video_id] = SpeedEstimator(
+                homography_matrix=H,
+                fps=fps,
+                camera_matrix=K,
+                distortion_coeffs=None  # Future enhancement: store distortion coeffs
+            )
         
         speed_estimator = speed_estimators[video_id]
         

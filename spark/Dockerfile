@@ -31,7 +31,7 @@ COPY spark/*.py ./
 COPY spark/converter.py ./
 
 # Copy ONNX model
-COPY spark/yolov8n.onnx ./
+COPY spark/yolov8s.onnx ./
 
 # --- SETUP TỰ ĐỘNG HÓA ---
 # Copy entrypoint script

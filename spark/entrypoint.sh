@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-ONNX_MODEL="yolov8n.onnx"
-ENGINE_MODEL="yolov8n.engine"
+ONNX_MODEL="yolov8s.onnx"
+ENGINE_MODEL="yolov8s.engine"
 
 echo "============================================="
 echo "   CONTAINER DEBUG INFO"
@@ -28,7 +28,10 @@ else
         sleep 10
         exit 1
     fi
-    
+
+    echo "============================================="
+    echo "🚀 STARTING CONVERTING MODEL APPLICATION"
+    echo "============================================="
     # Gọi python script để convert (Thêm -u để log hiện ra ngay lập tức)
     python3 -u converter.py "$ONNX_MODEL" "$ENGINE_MODEL"
 fi

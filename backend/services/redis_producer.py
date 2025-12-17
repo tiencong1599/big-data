@@ -35,7 +35,7 @@ class VideoFrameProducer:
                 break
             
             # Reduce quality + resize for faster processing
-            frame = cv2.resize(frame, (640, 480))
+            # frame = cv2.resize(frame, (640, 480))
             _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
             frame_base64 = base64.b64encode(buffer).decode('utf-8')
             

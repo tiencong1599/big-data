@@ -9,8 +9,9 @@ class SpeedEstimator:
     
     This class maps 2D image coordinates to 3D world coordinates using a
     homography matrix and calculates speed based on displacement over time.
+    Optionally applies lens undistortion using camera intrinsic matrix.
     """
-    def __init__(self, homography_matrix, fps=config.VIDEO_FPS):
+    def __init__(self, homography_matrix, fps=config.VIDEO_FPS, camera_matrix=None, distortion_coeffs=None):
         """
         Initializes the speed estimator.
         
@@ -18,11 +19,18 @@ class SpeedEstimator:
             homography_matrix (np.ndarray): The 3x3 homography matrix
                                             mapping image points to world points.
             fps (float): The frames-per-second of the video.
+            camera_matrix (np.ndarray, optional): The 3x3 camera intrinsic matrix.
+            distortion_coeffs (np.ndarray, optional): Lens distortion coefficients [k1,k2,p1,p2,k3].
         """
         self.H = homography_matrix
         self.H_inv = np.linalg.inv(homography_matrix)
         self.fps = fps
         self.time_per_frame = 1.0 / fps
+        
+        # Camera calibration parameters
+        self.camera_matrix = camera_matrix
+        self.distortion_coeffs = distortion_coeffs
+        self.use_undistortion = camera_matrix is not None and distortion_coeffs is not None
         
         # State-keeping dictionaries
         # self.prev_positions = {track_id: (world_x, world_y, frame_number)}
@@ -31,10 +39,45 @@ class SpeedEstimator:
         self.current_speeds = defaultdict(lambda: 0.0)
         
         print(f"SpeedEstimator initialized with FPS: {fps}")
+        if self.use_undistortion:
+            print(f"  Using camera matrix for lens undistortion")
+        else:
+            print(f"  No lens undistortion (camera matrix not provided)")
 
+    def _undistort_point(self, image_point):
+        """
+        Apply lens undistortion to an image point if camera calibration is available.
+        
+        Args:
+            image_point (tuple): (x, y) distorted pixel coordinate
+            
+        Returns:
+            tuple: (x, y) undistorted pixel coordinate
+        """
+        if not self.use_undistortion:
+            return image_point
+        
+        try:
+            # Convert to format expected by OpenCV
+            point = np.array([[image_point]], dtype=np.float32)
+            
+            # Undistort the point
+            undistorted = cv2.undistortPoints(
+                point, 
+                self.camera_matrix, 
+                self.distortion_coeffs,
+                P=self.camera_matrix  # Project back to image coordinates
+            )
+            
+            return (undistorted[0][0][0], undistorted[0][0][1])
+        except:
+            # If undistortion fails, return original point
+            return image_point
+    
     def _transform_to_world(self, image_point):
         """
         Transforms a 2D image point to 3D world coordinates (on the ground plane).
+        Applies lens undistortion if camera calibration is available.
         
         Args:
             image_point (tuple): (x, y) pixel coordinate.
@@ -42,8 +85,11 @@ class SpeedEstimator:
         Returns:
             tuple: (world_x, world_y) coordinate in real-world units (e.g., meters).
         """
+        # Apply lens undistortion if available
+        undistorted_point = self._undistort_point(image_point)
+        
         # Create a homogeneous coordinate
-        image_point_homogeneous = np.array([image_point[0], image_point[1], 1.0])
+        image_point_homogeneous = np.array([undistorted_point[0], undistorted_point[1], 1.0])
         
         # Apply the homography
         world_point_homogeneous = self.H @ image_point_homogeneous

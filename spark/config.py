@@ -10,14 +10,14 @@ MODEL_FILE = None
 DEVICE = os.getenv('DEVICE', 'cuda:0')  # 'cuda:0' for GPU, 'cpu' for CPU
 
 # Auto-detect available model file
-if os.path.exists('yolov8n.engine'):
-    MODEL_FILE = 'yolov8n.engine'
+if os.path.exists('yolov8s.engine'):
+    MODEL_FILE = 'yolov8s.engine'
     print("✓ Found TensorRT engine model (GPU acceleration)")
-elif os.path.exists('yolov8n.onnx'):
-    MODEL_FILE = 'yolov8n.onnx'
+elif os.path.exists('yolov8s.onnx'):
+    MODEL_FILE = 'yolov8s.onnx'
     print("✓ Found ONNX model (CPU/GPU)")
 else:
-    raise FileNotFoundError("No model file found! Place yolov8n.engine or yolov8n.onnx in spark/ directory")
+    raise FileNotFoundError("No model file found! Place yolov8s.engine or yolov8s.onnx in spark/ directory")
 
 # YOLO Model Path
 YOLO_MODEL_PATH = MODEL_FILE
@@ -76,8 +76,8 @@ DEFAULT_VIDEO_FPS = 30
 # --- DETECTION & TRACKING CONFIG ---
 
 # Vehicle Classes to Detect (COCO class IDs)
-# 2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'
-VEHICLE_CLASS_IDS = [2, 3, 5, 7]
+# 0: 'car', 1: 'bus', 2: 'truck', 3: 'motobike'
+VEHICLE_CLASS_IDS = [0, 1, 2, 3]
 
 # Detection Confidence Threshold
 CONF_THRESHOLD = 0.4

@@ -1,215 +1,190 @@
 import cv2
 import numpy as np
 import config
-import time
 import os
+import time
 
-# Import TensorRT libraries an toàn
+# Import TensorRT libraries
 try:
     import tensorrt as trt
     import pycuda.driver as cuda
     import pycuda.autoinit
 except ImportError:
-    print("⚠️ TensorRT/PyCUDA not found. Ensure you are running inside the Docker container.")
+    print("⚠️ TensorRT/PyCUDA not found. GPU inference will fail.")
 
 class VehicleDetector:
-    def __init__(self, model_name='yolov8n', imgsz=config.YOLO_IMGSZ):
-        self.imgsz = imgsz
-        self.conf_threshold = config.CONF_THRESHOLD
-        
-        # Tự động tìm file model
-        engine_path = f"{model_name}.engine"
-        onnx_path = f"{model_name}.onnx"
-        
-        print(f"🔄 Initializing Detector...")
-
-        if os.path.exists(engine_path):
-            print(f"🚀 Found Optimized Engine: {engine_path}")
-            self.model_path = engine_path
-            self.backend = 'tensorrt'
-            self._init_tensorrt(engine_path)
-        elif os.path.exists(onnx_path):
-            print(f"⚠️ Engine not found, falling back to ONNX: {onnx_path}")
-            self.model_path = onnx_path
-            self.backend = 'onnx'
-            self._init_onnx(onnx_path)
-        else:
-            raise FileNotFoundError(f"Could not find {engine_path} or {onnx_path}")
-
-    def _init_onnx(self, model_path):
-        import onnxruntime as ort
-        print("  -> Loading ONNX Runtime...")
-        providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
-        opts = ort.SessionOptions()
-        opts.log_severity_level = 3
-        self.session = ort.InferenceSession(model_path, sess_options=opts, providers=providers)
-        self.input_name = self.session.get_inputs()[0].name
-        self.output_names = [output.name for output in self.session.get_outputs()]
-        print(f"  ✓ ONNX Loaded. Provider: {self.session.get_providers()[0]}")
-
-    def _init_tensorrt(self, model_path):
-        print("  -> Loading TensorRT Engine (v10+ compatible)...")
-        try:
-            self.trt_logger = trt.Logger(trt.Logger.WARNING)
-            runtime = trt.Runtime(self.trt_logger)
-            
-            with open(model_path, 'rb') as f:
-                engine_data = f.read()
-            
-            self.engine = runtime.deserialize_cuda_engine(engine_data)
-            self.context = self.engine.create_execution_context()
-            
-            self.inputs = []
-            self.outputs = []
-            self.stream = cuda.Stream() # Tạo luồng xử lý GPU
-            
-            # --- LOGIC XỬ LÝ MEMORY (HỖ TRỢ TRT 10.x VÀ 8.x) ---
-            
-            # Cách xác định số lượng tensors tùy version
-            if hasattr(self.engine, 'num_io_tensors'):
-                num_bindings = self.engine.num_io_tensors
-                is_trt_10 = True
+    def __init__(self, model_path=None):
+        # Ưu tiên dùng đường dẫn từ config nếu không truyền vào
+        if model_path is None:
+            # Tự động tìm file engine nếu có
+            if config.MODEL_FILE and config.MODEL_FILE.endswith('.engine'):
+                self.engine_path = config.MODEL_FILE
+            elif os.path.exists("yolov8n.engine"):
+                self.engine_path = "yolov8n.engine"
             else:
-                num_bindings = self.engine.num_bindings
-                is_trt_10 = False
+                raise FileNotFoundError("Could not find .engine file in config or current dir")
+        else:
+            self.engine_path = model_path
 
-            for i in range(num_bindings):
-                if is_trt_10:
-                    name = self.engine.get_tensor_name(i)
-                    mode = self.engine.get_tensor_mode(name)
-                    is_input = (mode == trt.TensorIOMode.INPUT)
-                    shape = self.engine.get_tensor_shape(name)
-                    # FIX LỖI TYPE: Bọc vào np.dtype
-                    dtype = np.dtype(trt.nptype(self.engine.get_tensor_dtype(name)))
-                else:
-                    name = self.engine.get_binding_name(i)
-                    is_input = self.engine.binding_is_input(i)
-                    shape = self.engine.get_binding_shape(i)
-                    # FIX LỖI TYPE
-                    dtype = np.dtype(trt.nptype(self.engine.get_binding_dtype(i)))
+        print(f"🚀 Initializing TensorRT Detector with: {self.engine_path}")
+        
+        # --- LOGIC KHỞI TẠO CỦA BẠN ---
+        self.logger = trt.Logger(trt.Logger.WARNING)
+        
+        with open(self.engine_path, "rb") as f, trt.Runtime(self.logger) as runtime:
+            self.engine = runtime.deserialize_cuda_engine(f.read())
+        
+        if self.engine is None:
+            raise RuntimeError("Failed to load TensorRT engine.")
 
-                # Xử lý Dynamic Shape (nếu có -1)
-                if -1 in shape:
-                    print(f"  ⚠️ Warning: Dynamic shape found {shape}, forcing batch=1")
-                    lst = list(shape)
-                    if lst[0] == -1: lst[0] = 1
-                    shape = tuple(lst)
-
-                # Tính kích thước bộ nhớ cần cấp phát
-                size = trt.volume(shape) * dtype.itemsize
-                
-                # Cấp phát bộ nhớ trên GPU
-                device_mem = cuda.mem_alloc(size)
-                
-                # Tạo binding dictionary
-                binding = {
-                    'name': name,
-                    'index': i,
-                    'device': device_mem, # Pointer GPU
-                    'host': None,         # Pointer CPU (sẽ tạo cho output)
-                    'shape': shape,
-                    'dtype': dtype
-                }
-
-                if is_input:
-                    self.inputs.append(binding)
-                    # TRT 10 bắt buộc set address
-                    if is_trt_10: self.context.set_tensor_address(name, int(device_mem))
-                else:
-                    # Output cần bộ nhớ đệm ở CPU (Host) để nhận kết quả về
-                    binding['host'] = cuda.pagelocked_empty(trt.volume(shape), dtype)
-                    self.outputs.append(binding)
-                    if is_trt_10: self.context.set_tensor_address(name, int(device_mem))
-
-            print("  ✓ TensorRT Engine Loaded & Memory Allocated.")
+        self.context = self.engine.create_execution_context()
+        
+        self.inputs = []
+        self.outputs = []
+        self.allocations = []
+        self.input_shape = None
+        
+        # Setup buffer
+        for i in range(self.engine.num_io_tensors):
+            name = self.engine.get_tensor_name(i)
+            dtype = self.engine.get_tensor_dtype(name)
+            shape = self.engine.get_tensor_shape(name)
             
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            raise RuntimeError(f"TensorRT Init Failed: {e}")
+            # Tính size
+            vol = 1
+            for s in shape:
+                vol *= abs(s) if s != -1 else 1 # Handle dynamic shape basic
+            
+            size = vol * np.dtype(trt.nptype(dtype)).itemsize
+            allocation = cuda.mem_alloc(size)
+            self.allocations.append(allocation)
+            
+            binding = {
+                'index': i,
+                'name': name,
+                'dtype': np.dtype(trt.nptype(dtype)),
+                'shape': shape,
+                'allocation': allocation,
+                'size': size
+            }
+            
+            if self.engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
+                self.inputs.append(binding)
+                self.input_shape = shape 
+            else:
+                self.outputs.append(binding)
+                
+        # Cache warm-up (optional)
+        print("✓ Detector initialized successfully.")
 
-    def preprocess(self, frame):
-        # Resize và chuẩn hóa ảnh cho YOLO
-        img = cv2.resize(frame, (self.imgsz, self.imgsz))
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = img.astype(np.float32) / 255.0
-        img = np.transpose(img, (2, 0, 1)) # HWC -> CHW
-        img = np.expand_dims(img, axis=0)  # Thêm batch dimension -> (1, 3, 640, 640)
-        return np.ascontiguousarray(img)
+    def preprocess(self, image):
+        # Logic preprocess Letterbox của bạn
+        input_h = self.input_shape[2] if self.input_shape[2] > 0 else 640
+        input_w = self.input_shape[3] if self.input_shape[3] > 0 else 640
+        
+        h, w = image.shape[:2]
+        scale = min(input_w / w, input_h / h)
+        nw, nh = int(w * scale), int(h * scale)
+        
+        image_resized = cv2.resize(image, (nw, nh))
+        
+        canvas = np.full((input_h, input_w, 3), 114, dtype=np.uint8)
+        canvas[(input_h - nh) // 2:(input_h - nh) // 2 + nh, 
+               (input_w - nw) // 2:(input_w - nw) // 2 + nw, :] = image_resized
+        
+        blob = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+        blob = blob.transpose((2, 0, 1)) 
+        blob = np.expand_dims(blob, axis=0) 
+        blob = blob.astype(np.float32) / 255.0
+        
+        return blob, scale, (input_w, input_h)
 
-    def detect(self, frame):
+    def detect(self, image):
+        """
+        Hàm này thay thế cho infer().
+        Input: numpy array (ảnh)
+        Output: list các detection [([x1, y1, x2, y2], confidence, class_id), ...]
+        """
+        if image is None: 
+            return []
+
+        h_orig, w_orig = image.shape[:2]
+        
         # 1. Preprocess
-        input_tensor = self.preprocess(frame)
+        input_tensor, scale, input_size = self.preprocess(image)
         
-        # 2. Inference
-        if self.backend == 'onnx':
-            outputs = self.session.run(self.output_names, {self.input_name: input_tensor})
+        # 2. Copy to GPU
+        cuda.memcpy_htod(self.inputs[0]['allocation'], np.ascontiguousarray(input_tensor))
         
-        elif self.backend == 'tensorrt':
-            # --- FIX LỖI INPUT BUFFER TẠI ĐÂY ---
-            
-            # Lấy địa chỉ bộ nhớ GPU của input đầu tiên
-            input_mem = self.inputs[0]['device']
-            
-            # Copy dữ liệu từ CPU (input_tensor) lên GPU (input_mem)
-            cuda.memcpy_htod_async(input_mem, input_tensor, self.stream)
-            
-            # Thực thi mô hình (Execute)
-            self.context.execute_async_v3(stream_handle=self.stream.handle)
-            
-            # Copy kết quả từ GPU (device) về CPU (host)
-            for out in self.outputs:
-                cuda.memcpy_dtoh_async(out['host'], out['device'], self.stream)
-            
-            # Đồng bộ hóa (Chờ GPU chạy xong)
-            self.stream.synchronize()
-            
-            # Lấy kết quả ra list
-            outputs = [out['host'].reshape(out['shape']) for out in self.outputs]
+        # 3. Set address & Execute Async V3
+        for i in range(len(self.inputs)):
+            self.context.set_tensor_address(self.inputs[i]['name'], int(self.inputs[i]['allocation']))
+        for i in range(len(self.outputs)):
+            self.context.set_tensor_address(self.outputs[i]['name'], int(self.outputs[i]['allocation']))
 
-        # 3. Postprocess
-        return self.postprocess(outputs, frame.shape[:2])
+        self.context.execute_async_v3(stream_handle=0)
+        
+        # 4. Copy back to CPU
+        # output_data size calculation depends on implementation, ensure generic enough
+        output_binding = self.outputs[0]
+        output_data = np.zeros(output_binding['size'] // 4, dtype=np.float32)
+        cuda.memcpy_dtoh(output_data, output_binding['allocation'])
+        
+        # 5. Post-process (Reshape & Transpose)
+        # YOLOv8 output: [1, 4+nc, 8400] -> [1, 84, 8400] for COCO
+        num_anchors = 8400
+        num_channels = output_data.size // num_anchors
+        
+        output_data = output_data.reshape((num_channels, num_anchors))
+        output_data = output_data.transpose() # [8400, 84]
+        
+        boxes = []
+        confidences = []
+        class_ids = []
+        
+        # Duyệt qua các anchor
+        for row in output_data:
+            classes_scores = row[4:]
+            max_score = np.amax(classes_scores)
+            
+            # Lọc ngưỡng Confidence
+            if max_score > config.CONF_THRESHOLD:
+                class_id = np.argmax(classes_scores)
+                
+                # Chỉ lấy các class xe cộ định nghĩa trong config (car, bus, truck...)
+                if class_id in config.VEHICLE_CLASS_IDS:
+                    x, y, w, h = row[0], row[1], row[2], row[3]
+                    
+                    left = (x - 0.5 * w)
+                    top = (y - 0.5 * h)
+                    
+                    boxes.append([int(left), int(top), int(w), int(h)])
+                    confidences.append(float(max_score))
+                    class_ids.append(class_id)
+        
+        # NMS
+        indices = cv2.dnn.NMSBoxes(boxes, confidences, config.CONF_THRESHOLD, 0.45)
+        
+        final_detections = []
+        if len(indices) > 0:
+            dw = (input_size[0] - w_orig * scale) / 2
+            dh = (input_size[1] - h_orig * scale) / 2
+            
+            for i in indices.flatten():
+                box = boxes[i]
+                # Scale lại tọa độ về ảnh gốc
+                x = (box[0] - dw) / scale
+                y = (box[1] - dh) / scale
+                w = box[2] / scale
+                h = box[3] / scale
+                
+                # Clip coordinates để không văng ra ngoài ảnh
+                x1 = max(0, int(x))
+                y1 = max(0, int(y))
+                x2 = min(w_orig, int(x + w))
+                y2 = min(h_orig, int(y + h))
+                
+                # Format trả về cho Tracker: ([x1, y1, x2, y2], conf, class_id)
+                final_detections.append(([x1, y1, x2, y2], confidences[i], int(class_ids[i])))
 
-    def postprocess(self, outputs, frame_shape):
-        detections = []
-        # Output của YOLOv8 thường là [1, 84, 8400] -> cần transpose thành [1, 8400, 84]
-        output = outputs[0]
-        if output.shape[1] == 84: 
-            output = np.transpose(output, (0, 2, 1))
-        
-        output = output[0] # Lấy batch đầu tiên
-        
-        orig_h, orig_w = frame_shape
-        scale_x = orig_w / self.imgsz
-        scale_y = orig_h / self.imgsz
-        
-        # Format output: [x, y, w, h, class_probs...]
-        classes_scores = output[:, 4:]
-        class_ids = np.argmax(classes_scores, axis=1)
-        confidences = np.max(classes_scores, axis=1)
-        
-        # Lọc ngưỡng tự tin (Confidence Threshold)
-        mask = (confidences > self.conf_threshold) & (np.isin(class_ids, config.VEHICLE_CLASS_IDS))
-        
-        filtered_output = output[mask]
-        filtered_confidences = confidences[mask]
-        filtered_class_ids = class_ids[mask]
-        
-        for i, detection in enumerate(filtered_output):
-            x_center, y_center, width, height = detection[:4]
-            
-            # Chuyển đổi tọa độ về ảnh gốc
-            x1 = int((x_center - width / 2) * scale_x)
-            y1 = int((y_center - height / 2) * scale_y)
-            x2 = int((x_center + width / 2) * scale_x)
-            y2 = int((y_center + height / 2) * scale_y)
-            
-            # Clip để không văng ra ngoài khung hình
-            x1 = max(0, min(x1, orig_w))
-            y1 = max(0, min(y1, orig_h))
-            x2 = max(0, min(x2, orig_w))
-            y2 = max(0, min(y2, orig_h))
-            
-            detections.append(([x1, y1, x2, y2], float(filtered_confidences[i]), int(filtered_class_ids[i])))
-        
-        return detections
+        return final_detections
