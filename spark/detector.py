@@ -4,139 +4,114 @@ import os
 import config
 
 class VehicleDetector:
-    """
-    Handles vehicle detection using YOLOv8 with TensorRT or ONNX backend.
-    """
-    def __init__(self, model_path='yolov8n.engine', imgsz=config.YOLO_IMGSZ):
-        """
-        Initializes the YOLOv8 model with TensorRT or ONNX backend.
+    def __init__(self, model_name='yolov8n', imgsz=config.YOLO_IMGSZ):
+        # Tự động chọn file tốt nhất
+        engine_path = f"{model_name}.engine"
+        onnx_path = f"{model_name}.onnx"
         
-        Args:
-            model_path (str): Path to the model file (.engine or .onnx)
-            imgsz (int): Input image size for inference.
-        """
         self.imgsz = imgsz
-        self.model_path = model_path
         
-        # Determine backend based on file extension
-        if model_path.endswith('.engine'):
-            self._init_tensorrt(model_path)
-        elif model_path.endswith('.onnx'):
-            self._init_onnx(model_path)
+        # Ưu tiên load Engine trước
+        if os.path.exists(engine_path):
+            print(f"🚀 Found Optimized Engine: {engine_path}")
+            self.model_path = engine_path
+            self.backend = 'tensorrt'
+            self._init_tensorrt(engine_path)
+        
+        # Nếu không có engine thì dùng ONNX
+        elif os.path.exists(onnx_path):
+            print(f"⚠️ Engine not found, falling back to ONNX: {onnx_path}")
+            self.model_path = onnx_path
+            self.backend = 'onnx'
+            self._init_onnx(onnx_path)
         else:
-            raise ValueError(f"Unsupported model format: {model_path}")
-    
+            raise FileNotFoundError(f"Could not find {engine_path} or {onnx_path}")
+
+    def _init_onnx(self, model_path):
+        import onnxruntime as ort
+        print("  -> Loading ONNX Runtime...")
+        providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+        opts = ort.SessionOptions()
+        opts.log_severity_level = 3
+        self.session = ort.InferenceSession(model_path, sess_options=opts, providers=providers)
+        self.input_name = self.session.get_inputs()[0].name
+        self.output_names = [output.name for output in self.session.get_outputs()]
+        print(f"  ✓ ONNX Loaded. Provider: {self.session.get_providers()[0]}")
+
     def _init_tensorrt(self, model_path):
-        """Initialize TensorRT engine for GPU inference"""
+        print("  -> Loading TensorRT Engine...")
         try:
             import tensorrt as trt
             import pycuda.driver as cuda
-            import pycuda.autoinit  # Automatic CUDA context management
+            import pycuda.autoinit  # Tự động khởi tạo CUDA Context
             
-            self.backend = 'tensorrt'
-            print(f"Loading TensorRT engine: {model_path}")
-            
-            # Create TensorRT logger and runtime
             self.trt_logger = trt.Logger(trt.Logger.WARNING)
             runtime = trt.Runtime(self.trt_logger)
             
-            # Load serialized engine
             with open(model_path, 'rb') as f:
                 engine_data = f.read()
             
             self.engine = runtime.deserialize_cuda_engine(engine_data)
-            if self.engine is None:
-                raise RuntimeError("Failed to deserialize TensorRT engine")
-            
             self.context = self.engine.create_execution_context()
             
-            # Get input/output binding information
-            self.input_name = None
-            self.output_names = []
-            self.bindings = []
-            self.output_buffers = []
+            # Cấp phát bộ nhớ
+            self.inputs, self.outputs, self.bindings = [], [], []
+            self.stream = cuda.Stream()
             
             for i in range(self.engine.num_bindings):
-                name = self.engine.get_binding_name(i)
+                tensor_name = self.engine.get_binding_name(i)
                 dtype = trt.nptype(self.engine.get_binding_dtype(i))
                 shape = self.engine.get_binding_shape(i)
-                size = trt.volume(shape)
                 
-                # Allocate device memory
-                device_mem = cuda.mem_alloc(size * dtype.itemsize)
+                # Xử lý dynamic shape nếu cần (với YOLO thường là fix cứng)
+                if shape[0] == -1: shape = (1,) + shape[1:]
+                
+                size = trt.volume(shape) * dtype.itemsize
+                
+                # Cấp phát bộ nhớ trên GPU
+                device_mem = cuda.mem_alloc(size)
                 self.bindings.append(int(device_mem))
                 
                 if self.engine.binding_is_input(i):
-                    self.input_name = name
-                    self.input_shape = shape
-                    self.input_dtype = dtype
-                    self.input_buffer = device_mem
+                    self.inputs.append({'host': None, 'device': device_mem, 'shape': shape, 'dtype': dtype})
                 else:
-                    self.output_names.append(name)
-                    # Allocate host memory for output
-                    host_mem = cuda.pagelocked_empty(size, dtype)
-                    self.output_buffers.append((device_mem, host_mem, shape))
+                    host_mem = cuda.pagelocked_empty(trt.volume(shape), dtype)
+                    self.outputs.append({'host': host_mem, 'device': device_mem, 'shape': shape})
             
-            print(f"✓ TensorRT engine loaded: {model_path}")
-            print(f"  Input: {self.input_name} {self.input_shape}")
-            print(f"  Outputs: {self.output_names}")
+            print("  ✓ TensorRT Engine Loaded successfully.")
             
-        except ImportError as e:
-            raise ImportError(
-                "TensorRT dependencies not installed. "
-                "Install: pip install tensorrt pycuda"
-            ) from e
+        except ImportError:
+            raise ImportError("Missing libraries for TensorRT. Please install 'tensorrt' and 'pycuda'.")
         except Exception as e:
-            raise RuntimeError(f"Failed to initialize TensorRT engine: {e}") from e
-    
-    def _init_onnx(self, model_path):
-        """Initialize ONNX Runtime for CPU/GPU inference"""
-        try:
-            import onnxruntime as ort
-            
-            self.backend = 'onnx'
-            print(f"Loading ONNX model: {model_path}")
-            
-            # Configure execution providers
-            providers = ['CPUExecutionProvider']
-            if ort.get_device() == 'GPU':
-                providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
-            
-            self.session = ort.InferenceSession(model_path, providers=providers)
-            self.input_name = self.session.get_inputs()[0].name
-            self.output_names = [output.name for output in self.session.get_outputs()]
-            
-            print(f"✓ ONNX model loaded: {model_path}")
-            print(f"  Providers: {providers}")
-            
-        except ImportError as e:
-            raise ImportError("ONNX Runtime not installed. Install: pip install onnxruntime-gpu") from e
-    
+            raise RuntimeError(f"TensorRT Init Failed: {e}")
+
     def preprocess(self, frame):
-        """
-        Preprocess frame for model input.
-        
-        Args:
-            frame (np.ndarray): Input frame in BGR format
-            
-        Returns:
-            np.ndarray: Preprocessed frame ready for inference
-        """
-        # Resize to model input size
         img = cv2.resize(frame, (self.imgsz, self.imgsz))
-        
-        # Convert BGR to RGB
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        
-        # Normalize to [0, 1] and transpose to (1, 3, H, W)
         img = img.astype(np.float32) / 255.0
         img = np.transpose(img, (2, 0, 1))
         img = np.expand_dims(img, axis=0)
+        return np.ascontiguousarray(img)
+
+    def detect(self, frame):
+        input_tensor = self.preprocess(frame)
         
-        # Ensure contiguous array
-        img = np.ascontiguousarray(img)
+        if self.backend == 'onnx':
+            outputs = self.session.run(self.output_names, {self.input_name: input_tensor})
         
-        return img
+        elif self.backend == 'tensorrt':
+            import pycuda.driver as cuda
+            # Copy input to device
+            cuda.memcpy_htod_async(self.inputs[0]['device'], input_tensor, self.stream)
+            # Run inference
+            self.context.execute_async_v2(bindings=self.bindings, stream_handle=self.stream.handle)
+            # Copy output back
+            for out in self.outputs:
+                cuda.memcpy_dtoh_async(out['host'], out['device'], self.stream)
+            self.stream.synchronize()
+            outputs = [out['host'].reshape(out['shape']) for out in self.outputs]
+
+        return self.postprocess(outputs, frame.shape[:2])
     
     def _inference_tensorrt(self, input_tensor):
         """Run inference using TensorRT"""

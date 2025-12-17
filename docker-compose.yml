@@ -194,6 +194,8 @@ services:
     networks:
       - video_streaming_network
     restart: unless-stopped
+    volumes:
+      - ./spark:/app
 
   # Frontend
   frontend:
