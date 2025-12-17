@@ -165,7 +165,7 @@ services:
       - video_streaming_network
     restart: unless-stopped
 
-  # Spark Streaming with Redis
+  # Spark Streaming with Redis (GPU-accelerated)
   spark:
     build:
       context: .
@@ -179,8 +179,18 @@ services:
       REDIS_PORT: 6379
       REDIS_INPUT_STREAM: video-frames
       REDIS_OUTPUT_STREAM: processed-frames
+      DEVICE: cuda:0  # GPU device
+      ENABLE_VEHICLE_DETECTION: "true"
     security_opt:
       - seccomp:unconfined
+    # GPU support using NVIDIA Container Toolkit
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     networks:
       - video_streaming_network
     restart: unless-stopped

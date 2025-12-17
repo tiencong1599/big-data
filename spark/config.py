@@ -1,49 +1,53 @@
-import numpy as np
-import json
 import os
-# --- CRITICAL CONFIGURATION ---
-# These values MUST be replaced with your own calibration results.
-# You can get these by running the `calibrate.py` utility.
+import json
+import numpy as np
 
-# 1. Camera Intrinsic Matrix (K)
-# This is a 3x3 matrix specific to your camera lens and sensor.
-# Format: np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
-CAMERA_MATRIX_K = np.array([
-    [1000.0, 0.0, 640.0],  # fx, 0, cx
-    [0.0, 1000.0, 360.0], # 0, fy, cy
-    [0.0, 0.0, 1.0]    # 0, 0, 1
-], dtype=np.float32)
+# --- DEVICE CONFIGURATION ---
 
-# 2. Image-to-World Homography Matrix (H)
-# This 3x3 matrix maps 2D pixel coordinates (from the image) to 3D
-# real-world coordinates (on the ground plane, e.g., in meters).
-# This is specific to your camera's *position and angle*.
-HOMOGRAPHY_MATRIX_H = np.array([
-        [
-            0.08383036974498041,
-            0.047154582981551424,
-            -79.4187965371508
-        ],
-        [
-            -0.0013170073950060954,
-            0.24035384958861367,
-            -65.77661733618478
-        ],
-        [
-            0.0005355704990241491,
-            0.009876815124886492,
-            1.0
-        ]
-    ], dtype=np.float32)
+# Model file path - automatically detect .engine or .onnx
+# Priority: .engine (TensorRT GPU) > .onnx (ONNX Runtime)
+MODEL_FILE = None
+DEVICE = os.getenv('DEVICE', 'cuda:0')  # 'cuda:0' for GPU, 'cpu' for CPU
 
+# Auto-detect available model file
+if os.path.exists('yolov8n.engine'):
+    MODEL_FILE = 'yolov8n.engine'
+    print("✓ Found TensorRT engine model (GPU acceleration)")
+elif os.path.exists('yolov8n.onnx'):
+    MODEL_FILE = 'yolov8n.onnx'
+    print("✓ Found ONNX model (CPU/GPU)")
+else:
+    raise FileNotFoundError("No model file found! Place yolov8n.engine or yolov8n.onnx in spark/ directory")
 
-ROI_POLYGON = None
+# YOLO Model Path
+YOLO_MODEL_PATH = MODEL_FILE
 
-# --- Load calibration data from JSON files if they exist ---
+# YOLO inference image size (must match model export size)
+YOLO_IMGSZ = 640
+
+# --- REDIS CONFIGURATION ---
+
+REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
+REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
+REDIS_INPUT_STREAM = os.getenv('REDIS_INPUT_STREAM', 'video-frames')
+REDIS_OUTPUT_STREAM = os.getenv('REDIS_OUTPUT_STREAM', 'processed-frames')
+
+# --- CALIBRATION DATA ---
+
+# Camera Matrix (K) - from calibration
+CAMERA_MATRIX_K = None
+
+# Homography Matrix (H) - from calibration
+HOMOGRAPHY_MATRIX_H = None
+
+# ROI Polygon
+ROI_POLYGON = []
+
+# Load calibration files if available
 if os.path.exists('camera_calibration.json'):
     with open('camera_calibration.json', 'r') as f:
-        camera_data = json.load(f)
-        CAMERA_MATRIX_K = np.array(camera_data['camera_matrix_K'], dtype=np.float32)
+        calib_data = json.load(f)
+        CAMERA_MATRIX_K = np.array(calib_data['camera_matrix_K'], dtype=np.float32)
         print("Loaded camera matrix from camera_calibration.json")
 
 if os.path.exists('homography_config.json'):
@@ -57,59 +61,40 @@ if os.path.exists('roi_config.json'):
         roi_data = json.load(f)
         ROI_POLYGON = roi_data['roi_polygon']
         print(f"Loaded ROI polygon from roi_config.json: {len(ROI_POLYGON)} points")
-# 3. Video FPS
-# Set this to the FPS of your input video.
-# This is crucial for accurate speed calculation (distance / time).
+
+# --- VIDEO PROCESSING CONFIG ---
+
+# Video FPS
 VIDEO_FPS = 30.0
 
-# --- PERFORMANCE OPTIMIZATION ---
-
-# Frame skip: Process every Nth frame (1 = process all frames, 2 = process every other frame)
+# Frame skip: Process every Nth frame (1 = all frames, 2 = every other frame)
 FRAME_SKIP = 2
-
-# YOLO inference image size (smaller = faster, larger = more accurate)
-# Default: 640. Options: 320, 416, 512, 640, 1280
-# NOTE: This MUST match the input size the ONNX model was exported with (yolov8n.onnx uses 640)
-YOLO_IMGSZ = 640
-
-# Device for inference ('cuda:0' for GPU, 'cpu' for CPU)
-# GPU is 10-20x faster than CPU
-DEVICE = os.getenv('DEVICE', 'cpu')  # Use CPU by default in containers
-
-CONFIDENCE_THRESHOLD = 0.5
 
 # Default video FPS when not provided
 DEFAULT_VIDEO_FPS = 30
 
 # --- DETECTION & TRACKING CONFIG ---
 
-# 4. YOLO Model
-# 'yolov8n.pt' is small and fast.
-# 'yolov8m.pt' is a good balance of speed and accuracy.
-# 'yolov8l.pt' is slower but more accurate.
-YOLO_MODEL_PATH = 'yolov8n.onnx'
-
-# 5. Vehicle Classes to Detect
-# COCO class IDs for common vehicles:
+# Vehicle Classes to Detect (COCO class IDs)
 # 2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'
 VEHICLE_CLASS_IDS = [2, 3, 5, 7]
 
-# 6. Detection Confidence Threshold
-# Only detections with confidence > this value will be considered.
+# Detection Confidence Threshold
 CONF_THRESHOLD = 0.4
 
-# 7. Speed Unit Conversion
-# Speed is calculated in meters/second (m/s) by default.
-# To convert to km/h: 3.6
-# To convert to mph: 2.23694
+# --- SPEED ESTIMATION CONFIG ---
+
+# Speed conversion factor (m/s to km/h: 3.6, m/s to mph: 2.23694)
 SPEED_CONVERSION_FACTOR = 3.6
 SPEED_UNIT = "km/h"
 
 # Minimum track length for speed calculation
 MIN_TRACK_LENGTH = 5
 
-# --- DeepSORT TRACKER CONFIG ---
+# --- TRACKER CONFIG ---
 
 TRACKER_MAX_AGE = 30
 TRACKER_N_INIT = 3
 TRACKER_MAX_IOU_DISTANCE = 0.7
+
+print(f"Configuration loaded: Model={YOLO_MODEL_PATH}, Device={DEVICE}")

@@ -1,16 +1,18 @@
-# Redis Real-Time Video Frame Processor Requirements
+# spark/requirements.txt
 redis==5.0.1
 requests==2.31.0
+opencv-python-headless==4.8.1.78
+numpy==1.24.3
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.23
+deep-sort-realtime==1.3.2
 
-# Computer Vision & Deep Learning
-numpy==1.24.4
-opencv-python==4.8.1.78
-ultralytics>=8.0.0  # YOLOv8
-torch>=2.0.0
-torchvision>=0.15.0
+# --- PHẦN QUAN TRỌNG CHO MODEL ---
+# 1. Cho ONNX
+onnxruntime-gpu==1.19.2
 
-# DeepSORT Tracking
-deep-sort-realtime>=1.3.2
-scipy>=1.10.0
-scikit-learn>=1.2.0
-onnxruntime==1.19.2
+# 2. Cho TensorRT (.engine)
+# TensorRT Python bindings
+tensorrt>=8.6.1
+# PyCUDA để quản lý bộ nhớ GPU
+pycuda>=2022.1
