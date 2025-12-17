@@ -80,7 +80,9 @@ def main():
     http_server = tornado.httpserver.HTTPServer(
         app,
         max_buffer_size=524288000,  # 500MB buffer size
-        max_body_size=524288000     # 500MB max body size
+        max_body_size=524288000,    # 500MB max body size
+        idle_connection_timeout=180, # 3 minute idle timeout for long-running requests
+        body_timeout=180             # 3 minute timeout for reading request body
     )
     http_server.listen(options.port)
     

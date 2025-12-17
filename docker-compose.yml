@@ -168,8 +168,8 @@ services:
   # Spark Streaming with Redis
   spark:
     build:
-      context: ./spark
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: spark/Dockerfile
     container_name: spark_processor
     depends_on:
       redis:
@@ -179,6 +179,8 @@ services:
       REDIS_PORT: 6379
       REDIS_INPUT_STREAM: video-frames
       REDIS_OUTPUT_STREAM: processed-frames
+    security_opt:
+      - seccomp:unconfined
     networks:
       - video_streaming_network
     restart: unless-stopped

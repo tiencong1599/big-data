@@ -81,7 +81,7 @@ class StreamHandler(tornado.web.RequestHandler):
                 logger.info(f"Auth username: {AIRFLOW_USERNAME}")
                 logger.info(f"DAG run data: {dag_run_data}")
                 
-                # Use Tornado's async HTTP client
+                # Use Tornado's async HTTP client with timeout
                 http_client = tornado.httpclient.AsyncHTTPClient()
                 request = tornado.httpclient.HTTPRequest(
                     url=airflow_url,
@@ -90,7 +90,9 @@ class StreamHandler(tornado.web.RequestHandler):
                         'Content-Type': 'application/json',
                         'Authorization': f'Basic {auth_header}'
                     },
-                    body=json.dumps(dag_run_data)
+                    body=json.dumps(dag_run_data),
+                    request_timeout=120.0,  # 2 minute timeout for Airflow request
+                    connect_timeout=30.0     # 30 second connection timeout
                 )
                 
                 response = await http_client.fetch(request, raise_error=False)

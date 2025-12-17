@@ -69,7 +69,8 @@ FRAME_SKIP = 2
 
 # YOLO inference image size (smaller = faster, larger = more accurate)
 # Default: 640. Options: 320, 416, 512, 640, 1280
-YOLO_IMGSZ = 416
+# NOTE: This MUST match the input size the ONNX model was exported with (yolov8n.onnx uses 640)
+YOLO_IMGSZ = 640
 
 # Device for inference ('cuda:0' for GPU, 'cpu' for CPU)
 # GPU is 10-20x faster than CPU
@@ -86,7 +87,7 @@ DEFAULT_VIDEO_FPS = 30
 # 'yolov8n.pt' is small and fast.
 # 'yolov8m.pt' is a good balance of speed and accuracy.
 # 'yolov8l.pt' is slower but more accurate.
-YOLO_MODEL_PATH = 'yolov8n.pt'
+YOLO_MODEL_PATH = 'yolov8n.onnx'
 
 # 5. Vehicle Classes to Detect
 # COCO class IDs for common vehicles:
