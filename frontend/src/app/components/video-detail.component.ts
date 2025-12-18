@@ -29,7 +29,7 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
   
   // WATCHDOG MECHANISM (3-second timeout)
   private watchdogTimer: any = null;
-  private readonly WATCHDOG_TIMEOUT = 3000; // 3 seconds
+  private readonly WATCHDOG_TIMEOUT = 60000;
   private defaultThumbnail = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODAwIiBoZWlnaHQ9IjYwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iODAwIiBoZWlnaHQ9IjYwMCIgZmlsbD0iI2YwZjBmMCIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMjQiIGZpbGw9IiM5OTkiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj7wn46sIE5vIFN0cmVhbTwvdGV4dD48L3N2Zz4=';
 
   constructor(
@@ -38,7 +38,6 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
   ) {}
 
   ngOnInit() {
-    // Subscribe to WebSocket immediately on component load
     this.subscribeToWebSocket();
   }
   
@@ -49,7 +48,6 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   ngOnDestroy() {
-    // CRITICAL: Unsubscribe when switching videos or closing panel
     this.unsubscribeFromWebSocket();
     this.stopWatchdog();
   }
@@ -60,21 +58,17 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
     
     this.frameSubscription = this.wsService.subscribeToChannel(channelName, this.video.id).subscribe(
       (frameData: ProcessedFrameData) => {
-        // Reset watchdog timer on every frame received
         this.resetWatchdog();
         
         if (frameData.message) {
-          // Placeholder frame
           this.currentFrame = `data:image/jpeg;base64,${frameData.processed_frame}`;
         } else {
-          // Update image
           this.currentFrame = `data:image/jpeg;base64,${frameData.processed_frame}`;
           this.frameNumber = frameData.frame_number;
           this.vehicles = frameData.vehicles || [];
           this.totalVehicles = frameData.total_vehicles || 0;
           this.roiPolygon = frameData.roi_polygon;
           
-          // Draw bounding boxes on canvas overlay
           setTimeout(() => this.drawBoundingBoxes(), 10);
           
           if (frameData.end_of_stream) {
@@ -99,9 +93,8 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
     this.wsService.disconnect();
   }
   
-  // WATCHDOG TIMER MANAGEMENT
   startWatchdog() {
-    this.stopWatchdog(); // Clear any existing timer
+    this.stopWatchdog();
     
     this.watchdogTimer = setTimeout(() => {
       console.warn(`[VIDEO-DETAIL] ⏰ Watchdog timeout: No data for ${this.WATCHDOG_TIMEOUT}ms`);
@@ -125,16 +118,13 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
   handleWatchdogTimeout() {
     console.log('[VIDEO-DETAIL] 🔄 Reverting to default thumbnail');
     
-    // Revert to default thumbnail
     this.currentFrame = this.defaultThumbnail;
     this.vehicles = [];
     this.totalVehicles = 0;
     
-    // Reset "Start Stream" button
     this.isStreaming = false;
     
-    // Clear canvas
-    if (this.canvasContext) {
+    if (this.canvasContext && this.canvasOverlay) {
       const canvas = this.canvasOverlay.nativeElement;
       this.canvasContext.clearRect(0, 0, canvas.width, canvas.height);
     }
@@ -146,7 +136,6 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
     this.error = null;
     this.isStreaming = true;
     
-    // Start watchdog timer
     this.startWatchdog();
     
     this.videoService.startStream(this.video.id).subscribe({
@@ -177,7 +166,7 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
   }
   
   drawBoundingBoxes() {
-    if (!this.canvasContext || !this.videoImage) return;
+    if (!this.canvasContext || !this.videoImage || !this.canvasOverlay) return;
     
     const canvas = this.canvasOverlay.nativeElement;
     const img = this.videoImage.nativeElement;
@@ -214,6 +203,9 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
         5: '#ffff00'  // bus
       };
       const color = colors[class_id] || '#ffffff';
+      
+      // FIX: Add null checks
+      if (!this.canvasContext) return;
       
       this.canvasContext.strokeStyle = color;
       this.canvasContext.lineWidth = 3;

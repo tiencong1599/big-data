@@ -7,6 +7,7 @@ import logging
 import numpy as np
 import cv2
 from models.video import get_db, Video
+from database import SessionLocal
 from config.settings import VIDEO_STORAGE_PATH, ALLOWED_ORIGINS
 
 logger = logging.getLogger(__name__)
@@ -265,28 +266,39 @@ class VideoUploadHandler(BaseHandler):
 class VideoListHandler(BaseHandler):
     async def get(self):
         """Get list of all videos"""
+        self.set_default_headers()
+        
+        db = None
         try:
-            logger.info("=== Video List Request ===")
-            self.set_header("Connection", "close")  # Force close connection after response
-            db = get_db()
-            try:
-                videos = db.query(Video).all()
-                video_list = [video.to_dict() for video in videos]
-                
-                logger.info(f"Returning {len(video_list)} videos")
-                
-                self.set_status(200)
-                self.write({
-                    'videos': video_list,
-                    'count': len(video_list)
-                })
-            finally:
-                db.close()
-                
+            db = SessionLocal()
+            videos = db.query(Video).order_by(Video.created_at.desc()).all()
+            
+            video_list = []
+            for video in videos:
+                video_dict = {
+                    'id': video.id,
+                    'name': video.name,
+                    'file_path': video.file_path,
+                    'fps': video.fps,
+                    'created_at': video.created_at.isoformat() if video.created_at else None,
+                    'updated_at': video.updated_at.isoformat() if video.updated_at else None,
+                    'roi': video.roi,
+                    'calibrate_coordinates': video.calibrate_coordinates,
+                    'homography_matrix': video.homography_matrix,
+                    'camera_matrix': video.camera_matrix
+                }
+                video_list.append(video_dict)
+            
+            # Return array directly
+            self.write(json.dumps(video_list))
+            
         except Exception as e:
-            logger.error(f"List videos failed: {str(e)}", exc_info=True)
+            logger.error(f"Error fetching videos: {e}")
             self.set_status(500)
             self.write({'error': str(e)})
+        finally:
+            if db:
+                db.close()
 
 class VideoDetailHandler(BaseHandler):
     async def get(self, video_id):

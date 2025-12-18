@@ -27,6 +27,13 @@ export interface VehicleData {
   bbox: VehicleBBox;
   speed: number;
   speed_unit: string;
+  class_id: number;      // ADD THIS
+  confidence: number;    // ADD THIS
+}
+
+export interface OriginalResolution {
+  width: number;
+  height: number;
 }
 
 export interface ProcessedFrameData {
@@ -34,6 +41,7 @@ export interface ProcessedFrameData {
   frame_number: number;
   timestamp: number;
   processed_frame: string;
+  original_resolution: OriginalResolution;
   vehicles: VehicleData[];
   roi_polygon: number[][] | null;
   total_vehicles: number;

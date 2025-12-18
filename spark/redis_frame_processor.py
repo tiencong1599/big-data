@@ -25,9 +25,10 @@ tracker = None
 speed_estimators = {}
 
 class FrameProcessor:
-    def __init__(self):
+    def __init__(self, redis_client):
         # Analytics trackers per video
         self.analytics_trackers = {}
+        self.redis_client = redis_client
     
     def initialize_models(self):
         """Initialize vehicle detection models"""
@@ -265,6 +266,21 @@ class FrameProcessor:
                 'error': str(e)
             }
 
+    def _bbox_iou(self, boxA, boxB):
+        """Calculate IoU between two bounding boxes"""
+        xA = max(boxA[0], boxB[0])
+        yA = max(boxA[1], boxB[1])
+        xB = min(boxA[2], boxB[2])
+        yB = min(boxA[3], boxB[3])
+        
+        interArea = max(0, xB - xA) * max(0, yB - yA)
+        
+        boxAArea = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
+        boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
+        
+        iou = interArea / float(boxAArea + boxBArea - interArea + 1e-6)
+        return iou
+    
     def finalize_video_analytics(self, video_id):
         """Called when video processing completes"""
         if video_id in self.analytics_trackers:
@@ -307,6 +323,10 @@ def main():
         socket_keepalive=True
     )
     
+    # Initialize frame processor with Redis client
+    processor = FrameProcessor(redis_client)
+    processor.initialize_models()
+    
     # Create consumer group
     try:
         redis_client.xgroup_create(
@@ -346,7 +366,7 @@ def main():
                     start_time = time.time()
                     
                     # Process frame IMMEDIATELY
-                    result = process_frame(frame_data)
+                    result = processor.process_frame(frame_data)
                     
                     # Send result IMMEDIATELY to output stream
                     redis_client.xadd(

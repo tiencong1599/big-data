@@ -13,7 +13,7 @@ export class DashboardComponent implements OnInit {
   loading = false;
   error: string | null = null;
   
-  // NEW: Delete confirmation
+  // Delete confirmation
   showDeleteConfirm = false;
   videoToDelete: Video | null = null;
 
@@ -28,8 +28,17 @@ export class DashboardComponent implements OnInit {
     this.error = null;
     
     this.videoService.getVideos().subscribe({
-      next: (videos) => {
-        this.videos = videos;
+      next: (response: any) => {
+        // FIX: Handle both response formats
+        if (Array.isArray(response)) {
+          // Direct array response
+          this.videos = response;
+        } else if (response && response.videos) {
+          // Object with videos array
+          this.videos = response.videos;
+        } else {
+          this.videos = [];
+        }
         this.loading = false;
       },
       error: (err) => {
@@ -52,9 +61,8 @@ export class DashboardComponent implements OnInit {
     this.loadVideos();
   }
   
-  // NEW: Delete Video Methods
   confirmDelete(video: Video, event: Event) {
-    event.stopPropagation(); // Prevent video selection
+    event.stopPropagation();
     this.videoToDelete = video;
     this.showDeleteConfirm = true;
   }
@@ -73,15 +81,12 @@ export class DashboardComponent implements OnInit {
       next: () => {
         console.log(`✓ Video ${videoId} deleted successfully`);
         
-        // Remove from local array (no page refresh needed)
         this.videos = this.videos.filter(v => v.id !== videoId);
         
-        // Close detail panel if deleted video was selected
         if (this.selectedVideo?.id === videoId) {
           this.selectedVideo = null;
         }
         
-        // Close confirmation dialog
         this.showDeleteConfirm = false;
         this.videoToDelete = null;
       },
