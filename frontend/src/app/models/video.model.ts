@@ -27,19 +27,21 @@ export interface VehicleData {
   bbox: VehicleBBox;
   speed: number;
   speed_unit: string;
+  confidence: number;
+  class_id: number;
 }
 
 export interface ProcessedFrameData {
   video_id: number;
   frame_number: number;
   timestamp: number;
-  processed_frame: string;
   vehicles: VehicleData[];
   roi_polygon: number[][] | null;
   total_vehicles: number;
   error?: string;
   end_of_stream?: boolean;
   message?: string;
+  // Full CSR: No 'processed_frame' field (removed Base64)
 }
 
 export interface FrameData {

@@ -23,32 +23,37 @@ class VideoFrameProducer:
         print(f"[REDIS-PRODUCER] Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
     
     def stream_video(self, video_id, video_path):
-        """Stream video frames with configuration to Redis Streams"""
+        """
+        Stream video frames metadata to Redis Streams (Full CSR - NO BASE64!)
+        
+        IMPORTANT: For Full CSR, we only send frame metadata (frame_number, timestamp, config).
+        The video is served separately via MJPEG stream endpoint /api/video/stream/<video_id>
+        
+        This reduces Redis payload from ~2 MB/frame to ~500 bytes/frame (4000x reduction!)
+        """
         cap = cv2.VideoCapture(video_path)
         frame_number = 0
         
-        print(f"[REDIS-PRODUCER] Starting video stream for video {video_id}")
+        print(f"[REDIS-PRODUCER] Starting metadata stream for video {video_id} (Full CSR - NO BASE64)")
+        
+        # Send initial configuration once (before first frame)
+        config = get_video_config(video_id)
+        print(f"[REDIS-PRODUCER] Video config: {config}")
         
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
             
-            # Reduce quality + resize for faster processing
-            # frame = cv2.resize(frame, (640, 480))
-            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
-            frame_base64 = base64.b64encode(buffer).decode('utf-8')
-            
-            # Prepare message with full configuration from database
+            # Full CSR: Send metadata only (NO frame_data)
             message = {
                 'video_id': str(video_id),
                 'frame_number': str(frame_number),
-                'frame_data': frame_base64,
                 'timestamp': str(int(time.time() * 1000)),
-                'config': json.dumps(get_video_config(video_id))
+                'config': json.dumps(config) if frame_number == 0 else '{}'  # Only send config on first frame
             }
             
-            # Send to Redis Stream (XADD) - real-time, no batching
+            # Send to Redis Stream (XADD) - ultra-lightweight, no Base64
             message_id = self.redis_client.xadd(
                 REDIS_VIDEO_STREAM,
                 message,
@@ -56,7 +61,7 @@ class VideoFrameProducer:
             )
             
             if frame_number % 100 == 0:
-                print(f"[REDIS-PRODUCER] Sent frame {frame_number} (msg_id: {message_id.decode()})")
+                print(f"[REDIS-PRODUCER] Sent frame {frame_number} metadata (msg_id: {message_id.decode()}, payload: {len(str(message))} bytes)")
             
             frame_number += 1
         

@@ -71,6 +71,7 @@ def get_video_config(video_id):
         
         return {
             'video_id': video.id,
+            'video_path': video.file_path,  # Full CSR: send video path for frame reading
             'roi_polygon': roi_polygon,
             'homography_matrix': video.homography_matrix,
             'camera_matrix': video.camera_matrix,

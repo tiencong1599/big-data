@@ -62,23 +62,32 @@
         {{ error }}
       </div>
 
-      <!-- Video Display -->
+      <!-- Video Display (Full CSR) -->
       <div class="video-display">
-        <div *ngIf="!currentFrame && !isStreaming" class="placeholder">
+        <div *ngIf="!mjpegStreamUrl && !isStreaming" class="placeholder">
           <div class="placeholder-icon">🎬</div>
           <p>Click "Start Stream" to begin streaming video frames</p>
         </div>
 
-        <div *ngIf="isStreaming && !currentFrame" class="loading-frame">
+        <div *ngIf="isStreaming && !mjpegStreamUrl" class="loading-frame">
           <div class="spinner"></div>
           <p>Waiting for frames...</p>
         </div>
 
-        <img 
-          *ngIf="currentFrame" 
-          [src]="currentFrame" 
-          alt="Video Frame"
-          class="video-frame">
+        <!-- Full CSR: MJPEG video stream + Canvas overlay -->
+        <div *ngIf="mjpegStreamUrl" class="video-container" style="position: relative; width: 100%;">
+          <img 
+            [src]="mjpegStreamUrl" 
+            alt="Video Stream"
+            class="video-stream"
+            style="width: 100%; height: auto; display: block;">
+          
+          <canvas 
+            #videoCanvas 
+            class="detection-overlay"
+            style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;">
+          </canvas>
+        </div>
       </div>
     </div>
 
@@ -87,31 +96,43 @@
       <h3>Stats</h3>
       <div class="stats-grid">
         <div class="stat-card">
-          <div class="stat-label">Frames</div>
-          <div class="stat-value">1234</div>
+          <div class="stat-label">Frame Number</div>
+          <div class="stat-value">{{ frameNumber }}</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">FPS</div>
-          <div class="stat-value">30</div>
+          <div class="stat-label">Total Vehicles</div>
+          <div class="stat-value">{{ totalVehicles }}</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">Duration</div>
-          <div class="stat-value">12:34:56</div>
+          <div class="stat-label">Current Vehicles</div>
+          <div class="stat-value">{{ vehicles.length }}</div>
         </div>
       </div>
     </div>
 
     <!-- Vehicles Section -->
     <div class="vehicles-section">
-      <h3>Vehicles</h3>
+      <h3>Vehicles ({{ totalVehicles }} detected)</h3>
+      <div *ngIf="vehicles.length === 0" class="no-vehicles">
+        <p>No vehicles detected yet</p>
+      </div>
       <div class="vehicle-list">
-        <div class="vehicle-card">
+        <div *ngFor="let vehicle of vehicles" class="vehicle-card" [style.border-left]="'4px solid ' + getVehicleColor(vehicle.track_id)">
           <div class="vehicle-header">
-            <div class="vehicle-id">ABC123</div>
-            <div class="vehicle-speed">60 km/h</div>
+            <div class="vehicle-id">ID: {{ vehicle.track_id }}</div>
+            <div class="vehicle-speed" [ngClass]="{'high-speed': vehicle.speed > 80}">
+              {{ vehicle.speed.toFixed(1) }} {{ vehicle.speed_unit }}
+            </div>
           </div>
-          <div class="vehicle-bbox">
-            <div class="badge">High Speed</div>
+          <div class="vehicle-info">
+            <div class="vehicle-bbox">
+              <span class="label">BBox:</span>
+              <span class="value">[{{ vehicle.bbox.x1 }}, {{ vehicle.bbox.y1 }}] - [{{ vehicle.bbox.x2 }}, {{ vehicle.bbox.y2 }}]</span>
+            </div>
+            <div class="vehicle-confidence">
+              <span class="label">Confidence:</span>
+              <span class="value">{{ (vehicle.confidence * 100).toFixed(1) }}%</span>
+            </div>
           </div>
         </div>
       </div>

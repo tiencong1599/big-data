@@ -14,18 +14,30 @@ except ImportError:
 
 class VehicleDetector:
     def __init__(self, model_path=None):
-        # Ưu tiên dùng đường dẫn từ config nếu không truyền vào
+        """
+        Initialize TensorRT detector with flexible model selection
+        
+        Args:
+            model_path (str): Path to .engine file (yolov8s.engine or yolov8n.engine)
+        """
         if model_path is None:
-            # Tự động tìm file engine nếu có
-            if config.MODEL_FILE and config.MODEL_FILE.endswith('.engine'):
-                self.engine_path = config.MODEL_FILE
+            # Auto-detect: prefer yolov8s, fallback to yolov8n
+            if os.path.exists("yolov8s.engine"):
+                self.engine_path = "yolov8s.engine"
+                print("✓ Using yolov8s.engine (Higher Accuracy)")
             elif os.path.exists("yolov8n.engine"):
                 self.engine_path = "yolov8n.engine"
+                print("✓ Using yolov8n.engine (Faster FPS)")
             else:
-                raise FileNotFoundError("Could not find .engine file in config or current dir")
+                raise FileNotFoundError("No TensorRT engine found. Place yolov8s.engine or yolov8n.engine in spark/ directory")
         else:
             self.engine_path = model_path
-
+            print(f"✓ Using custom model: {model_path}")
+        
+        # Verify model exists
+        if not os.path.exists(self.engine_path):
+            raise FileNotFoundError(f"Model not found: {self.engine_path}")
+        
         print(f"🚀 Initializing TensorRT Detector with: {self.engine_path}")
         
         # --- LOGIC KHỞI TẠO CỦA BẠN ---

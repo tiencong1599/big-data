@@ -1,323 +1,435 @@
 import redis
 import json
-import base64
+import time
 import cv2
 import numpy as np
-import os
-import time
 from detector import VehicleDetector
 from tracker import VehicleTracker
 from speed_estimator import SpeedEstimator
-import visualizer
 import config
+import os
 
-# Configuration
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
-REDIS_INPUT_STREAM = os.getenv("REDIS_INPUT_STREAM", "video-frames")
-REDIS_OUTPUT_STREAM = os.getenv("REDIS_OUTPUT_STREAM", "processed-frames")
-ENABLE_VEHICLE_DETECTION = os.getenv("ENABLE_VEHICLE_DETECTION", "true").lower() == "true"
+# Redis Configuration
+REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
+REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
+REDIS_INPUT_STREAM = 'video-frames'
+REDIS_OUTPUT_STREAM = 'processed-frames'
 
-# Global model instances
-detector = None
-tracker = None
-speed_estimators = {}
+# Model Configuration (EASY SWITCHING)
+MODEL_PATH = os.getenv('MODEL_PATH', 'yolov8s.engine')  # Change to yolov8n.engine for faster FPS
+PROCESS_EVERY_N_FRAMES = int(os.getenv('FRAME_SKIP', 1))  # Process every Nth frame (1 = all frames)
 
-def initialize_models():
-    """Initialize vehicle detection models"""
-    global detector, tracker
-    
-    if detector is None:
-        detector = VehicleDetector()
-        print("Models initialized successfully")
-    
-    if tracker is None:
-        tracker = VehicleTracker()
-
-def encode_to_base64(image):
-    """Encode OpenCV image to base64 string with compression"""
-    _, buffer = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 60])
-    return base64.b64encode(buffer).decode('utf-8')
-
-def decode_from_base64(base64_string):
-    """Decode base64 string to OpenCV image"""
-    img_data = base64.b64decode(base64_string)
-    nparr = np.frombuffer(img_data, np.uint8)
-    return cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-def process_frame(frame_data):
-    """Process a single frame with vehicle detection and tracking"""
-    global detector, tracker, speed_estimators
-    
-    try:
-        # Initialize models if needed
-        initialize_models()
+class FrameProcessor:
+    def __init__(self):
+        print(f"🚀 Initializing FrameProcessor (Full CSR - reading from video file)")
+        print(f"   Model: {MODEL_PATH}")
+        print(f"   Frame Skip: {PROCESS_EVERY_N_FRAMES}")
         
-        # Parse input
-        video_id = int(frame_data['video_id'])
-        frame_number = int(frame_data['frame_number'])
-        frame_base64 = frame_data['frame_data']
-        timestamp = int(frame_data['timestamp'])
-        
-        # Handle config - may be missing or string
-        config_data = frame_data.get('config')
-        if config_data:
-            frame_config = json.loads(config_data) if isinstance(config_data, str) else config_data
-        else:
-            # Default config if missing
-            frame_config = {
-                'use_roi': False,
-                'use_homography': False,
-                'fps': 30.0,
-                'roi_polygon': [],
-                'homography_matrix': None
-            }
-        
-        # Check for end-of-stream
-        if frame_data.get('end_of_stream') == 'true' or not frame_base64:
-            return {
-                'video_id': str(video_id),
-                'frame_number': str(frame_number),
-                'timestamp': str(timestamp),
-                'end_of_stream': 'true',
-                'processed_frame': '',
-                'vehicles': '[]',
-                'roi_polygon': '[]',
-                'total_vehicles': '0',
-                'has_homography': 'false',
-                'has_camera_matrix': 'false',
-                'error': ''
-            }
-        
-        print(f"Processing frame {frame_number} for video {video_id}")
-        print(f"  Config: ROI={frame_config.get('use_roi')}, H={frame_config.get('use_homography')}, FPS={frame_config.get('fps')}")
-        
-        # Decode frame
-        frame = decode_from_base64(frame_base64)
-        
-        # Get configuration
-        use_roi = frame_config.get('use_roi', False)
-        use_homography = frame_config.get('use_homography', False)
-        fps = frame_config.get('fps', 30.0)
-        roi_polygon = frame_config.get('roi_polygon', [])
-        homography_matrix = frame_config.get('homography_matrix')
-        
-        # Get camera matrix if available
-        camera_matrix = frame_config.get('camera_matrix')
-        
-        # Initialize speed estimator for this video if needed
-        if video_id not in speed_estimators:
-            # Convert matrices from list to numpy array if needed
-            if homography_matrix and use_homography:
-                H = np.array(homography_matrix) if isinstance(homography_matrix, list) else homography_matrix
-            else:
-                # Create identity matrix if no homography
-                H = np.eye(3)
-            
-            # Convert camera matrix if provided
-            K = None
-            if camera_matrix:
-                K = np.array(camera_matrix) if isinstance(camera_matrix, list) else camera_matrix
-                print(f"  Camera matrix provided for distortion correction")
-            
-            # Create speed estimator with optional camera matrix
-            # Note: distortion_coeffs are not yet stored in DB, using None for now
-            speed_estimators[video_id] = SpeedEstimator(
-                homography_matrix=H,
-                fps=fps,
-                camera_matrix=K,
-                distortion_coeffs=None  # Future enhancement: store distortion coeffs
-            )
-        
-        speed_estimator = speed_estimators[video_id]
-        
-        # 1. Detect vehicles
-        detections = detector.detect(frame)
-        print(f"  Frame {frame_number}: {len(detections)} detections from YOLO")
-        
-        # 2. Apply ROI filter if enabled (TEMPORARILY DISABLED FOR DEBUGGING)
-        if use_roi and roi_polygon and len(roi_polygon) > 0:
-            print(f"  Frame dimensions: {frame.shape[1]}x{frame.shape[0]} (WxH)")
-            print(f"  ROI polygon: {roi_polygon}")
-            
-            roi_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
-            roi_points = np.array(roi_polygon, dtype=np.int32)
-            cv2.fillPoly(roi_mask, [roi_points], 255)
-            
-            filtered_detections = []
-            for i, det in enumerate(detections):
-                # det format: ([x1, y1, x2, y2], confidence, class_id)
-                bbox, conf, class_id = det
-                x1, y1, x2, y2 = bbox
-                center_x, center_y = (x1 + x2) // 2, (y1 + y2) // 2
-                
-                # Check bounds to prevent array access errors
-                if 0 <= center_y < frame.shape[0] and 0 <= center_x < frame.shape[1]:
-                    is_inside = roi_mask[center_y, center_x] > 0
-                    if i < 3:  # Log first 3 detections
-                        print(f"    Det[{i}]: bbox=[{x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f}] center=({center_x},{center_y}) inside={is_inside} roi_val={roi_mask[center_y, center_x]}")
-                    if is_inside:
-                        filtered_detections.append(det)
-                else:
-                    print(f"    Det[{i}]: center=({center_x},{center_y}) OUT OF BOUNDS!")
-                    
-            detections = filtered_detections
-            print(f"  After ROI filter: {len(detections)} detections remain")
-        
-        # 3. Track vehicles
-        tracks = tracker.update(frame, detections)
-        print(f"  Active tracks: {len(tracks)}")
-        
-        # 4. Estimate speeds (update with all tracks at once)
-        speeds = speed_estimator.update(tracks, frame_number)
-        if speeds:
-            print(f"  Speeds: {[(tid, f'{s:.1f}') for tid, s in speeds.items()]}")
-        
-        # 5. Prepare vehicle data
-        vehicles = []
-        for track_id, bbox in tracks:
-            x1, y1, x2, y2 = bbox
-            speed = speeds.get(track_id, 0.0)
-            
-            vehicles.append({
-                'track_id': int(track_id),
-                'bbox': {
-                    'x1': int(x1),
-                    'y1': int(y1),
-                    'x2': int(x2),
-                    'y2': int(y2)
-                },
-                'speed': float(speed),
-                'speed_unit': config.SPEED_UNIT
-            })
-        
-        # 6. Visualization
-        annotated_frame = visualizer.draw_results(frame, tracks, speeds)
-        
-        # Draw ROI polygon
-        if roi_polygon and len(roi_polygon) > 0:
-            roi_points = np.array(roi_polygon, dtype=np.int32)
-            cv2.polylines(annotated_frame, [roi_points], True, (0, 255, 0), 2)
-        
-        # Encode result
-        processed_frame_base64 = encode_to_base64(annotated_frame)
-        
-        return {
-            'video_id': str(video_id),
-            'frame_number': str(frame_number),
-            'timestamp': str(timestamp),
-            'end_of_stream': 'false',
-            'processed_frame': processed_frame_base64,
-            'vehicles': json.dumps(vehicles),
-            'roi_polygon': json.dumps(roi_polygon),
-            'total_vehicles': str(len(vehicles)),
-            'has_homography': str(use_homography and homography_matrix is not None).lower(),
-            'has_camera_matrix': 'false',
-            'error': ''
-        }
-        
-    except Exception as e:
-        print(f"✗ Error processing frame: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        return {
-            'video_id': str(frame_data.get('video_id', 0)),
-            'frame_number': str(frame_data.get('frame_number', 0)),
-            'timestamp': str(frame_data.get('timestamp', 0)),
-            'end_of_stream': 'false',
-            'processed_frame': '',
-            'vehicles': '[]',
-            'roi_polygon': '[]',
-            'total_vehicles': '0',
-            'has_homography': 'false',
-            'has_camera_matrix': 'false',
-            'error': str(e)
-        }
-
-def main():
-    """Real-time Redis Streams processor - one frame at a time"""
-    print(f"=" * 60)
-    print("REDIS STREAMS REAL-TIME VIDEO PROCESSOR")
-    print(f"=" * 60)
-    print(f"Redis Host: {REDIS_HOST}:{REDIS_PORT}")
-    print(f"Input Stream: {REDIS_INPUT_STREAM}")
-    print(f"Output Stream: {REDIS_OUTPUT_STREAM}")
-    print(f"Vehicle Detection: {ENABLE_VEHICLE_DETECTION}")
-    print(f"=" * 60)
-    
-    # Connect to Redis
-    redis_client = redis.Redis(
-        host=REDIS_HOST,
-        port=REDIS_PORT,
-        db=0,
-        decode_responses=True,
-        socket_keepalive=True
-    )
-    
-    # Create consumer group
-    try:
-        redis_client.xgroup_create(
-            REDIS_INPUT_STREAM,
-            'spark-processor-group',
-            id='0',
-            mkstream=True
+        # Redis connection
+        self.redis_client = redis.Redis(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            decode_responses=False  # Binary mode for metadata INPUT
         )
-        print("✓ Created consumer group 'spark-processor-group'")
-    except redis.exceptions.ResponseError as e:
-        if 'BUSYGROUP' in str(e):
-            print("✓ Consumer group already exists")
-        else:
-            raise
+        
+        # Initialize models
+        print("Loading YOLO detector...")
+        self.detector = VehicleDetector(model_path=MODEL_PATH)
+        
+        print("Loading tracker...")
+        self.tracker = VehicleTracker()
+        
+        # Speed estimator per video
+        self.speed_estimators = {}
+        
+        # Video capture cache (Full CSR - read directly from file)
+        self.video_captures = {}
+        
+        # Video path cache (for backward compatibility with old Redis messages)
+        self.video_path_cache = {}
+        
+        # Create consumer group
+        try:
+            self.redis_client.xgroup_create(
+                REDIS_INPUT_STREAM,
+                'processor-group',
+                id='0',
+                mkstream=True
+            )
+            print("✓ Created consumer group 'processor-group'")
+        except redis.exceptions.ResponseError as e:
+            if 'BUSYGROUP' in str(e):
+                print("✓ Consumer group already exists")
+            else:
+                raise
+        
+        print("✓ FrameProcessor initialized (Full CSR mode)\n")
     
-    print("\n🚀 Starting real-time frame processing...\n")
-    
-    frame_count = 0
-    last_id = '>'
-    
-    try:
-        while True:
-            # Read ONE message at a time (blocking with timeout)
-            messages = redis_client.xreadgroup(
-                groupname='spark-processor-group',
-                consumername='processor-1',
-                streams={REDIS_INPUT_STREAM: last_id},
-                count=1,  # Process ONE frame at a time
-                block=1000  # 1 second timeout
+    def get_video_path_from_db(self, video_id):
+        """
+        Fetch video path from PostgreSQL database (backward compatibility).
+        
+        This is used when old Redis messages don't have video_path in config.
+        
+        Args:
+            video_id: Video ID
+        
+        Returns:
+            str: Video file path or None if not found
+        """
+        # Check cache first
+        if video_id in self.video_path_cache:
+            return self.video_path_cache[video_id]
+        
+        try:
+            import psycopg2
+            
+            # Database connection (use environment variables)
+            DB_HOST = os.getenv('DB_HOST', 'localhost')
+            DB_PORT = os.getenv('DB_PORT', '5432')
+            DB_NAME = os.getenv('DB_NAME', 'video_processing')
+            DB_USER = os.getenv('DB_USER', 'postgres')
+            DB_PASSWORD = os.getenv('DB_PASSWORD', 'postgres')
+            
+            conn = psycopg2.connect(
+                host=DB_HOST,
+                port=DB_PORT,
+                database=DB_NAME,
+                user=DB_USER,
+                password=DB_PASSWORD
             )
             
-            if not messages:
-                continue
+            cursor = conn.cursor()
+            cursor.execute("SELECT file_path FROM videos WHERE id = %s", (video_id,))
+            result = cursor.fetchone()
             
-            for stream_name, stream_messages in messages:
-                for message_id, frame_data in stream_messages:
-                    start_time = time.time()
-                    
-                    # Process frame IMMEDIATELY
-                    result = process_frame(frame_data)
-                    
-                    # Send result IMMEDIATELY to output stream
-                    redis_client.xadd(
-                        REDIS_OUTPUT_STREAM,
-                        result,
-                        maxlen=1000
-                    )
-                    
-                    # Acknowledge message
-                    redis_client.xack(REDIS_INPUT_STREAM, 'spark-processor-group', message_id)
-                    
-                    frame_count += 1
-                    processing_time = (time.time() - start_time) * 1000
-                    
-                    if frame_count % 10 == 0:
-                        print(f"✓ Processed {frame_count} frames | Last: frame {result['frame_number']} ({processing_time:.1f}ms)")
+            cursor.close()
+            conn.close()
+            
+            if result:
+                video_path = result[0]
+                # Cache for future use
+                self.video_path_cache[video_id] = video_path
+                print(f"✓ Fetched video path from DB for video {video_id}: {video_path}")
+                return video_path
+            else:
+                print(f"✗ Video {video_id} not found in database")
+                return None
+                
+        except Exception as e:
+            print(f"✗ Error fetching video path from DB: {str(e)}")
+            return None
     
-    except KeyboardInterrupt:
-        print("\n\n⏹ Shutting down processor...")
+    def get_video_capture(self, video_id, video_path):
+        """
+        Get or create video capture for reading frames directly from file (Full CSR)
+        
+        Args:
+            video_id: Video ID
+            video_path: Full path to video file
+        
+        Returns:
+            cv2.VideoCapture object
+        """
+        if video_id not in self.video_captures:
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                raise ValueError(f"Could not open video file: {video_path}")
+            self.video_captures[video_id] = cap
+            print(f"✓ Opened video capture for video {video_id}: {video_path}")
+        return self.video_captures[video_id]
     
-    finally:
-        redis_client.close()
-        print(f"✓ Total frames processed: {frame_count}")
+    def read_frame_from_video(self, video_id, video_path, frame_number):
+        """
+        Read frame directly from video file (Full CSR - NO BASE64!)
+        
+        Args:
+            video_id: Video ID
+            video_path: Full path to video file
+            frame_number: Frame number to read
+        
+        Returns:
+            frame: OpenCV frame (BGR)
+        """
+        cap = self.get_video_capture(video_id, video_path)
+        
+        # Seek to frame number
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+        ret, frame = cap.read()
+        
+        if not ret:
+            raise ValueError(f"Could not read frame {frame_number} from video {video_id}")
+        
+        return frame
+    
+    def get_speed_estimator(self, video_id, homography_matrix, fps):
+        """Get or create speed estimator for video"""
+        if video_id not in self.speed_estimators:
+            if homography_matrix:
+                H = np.array(homography_matrix, dtype=np.float32)
+                self.speed_estimators[video_id] = SpeedEstimator(H, fps=fps)
+                print(f"✓ Created SpeedEstimator for video {video_id}")
+            else:
+                self.speed_estimators[video_id] = None
+        return self.speed_estimators[video_id]
+    
+    def process_frame(self, frame_data):
+        """
+        Process frame and return METADATA ONLY (no image)
+        
+        Returns:
+        {
+            'video_id': 1,
+            'frame_number': 42,
+            'timestamp': 1703001234567,
+            'original_resolution': {'width': 1920, 'height': 1080},
+            'vehicles': [
+                {
+                    'track_id': 5,
+                    'bbox': {'x1': 100, 'y1': 200, 'x2': 300, 'y2': 400},
+                    'class_id': 2,
+                    'confidence': 0.95,
+                    'speed': 45.3,
+                    'speed_unit': 'km/h'
+                },
+                ...
+            ],
+            'total_vehicles': 3,
+            'processing_time_ms': 23.5
+        }
+        """
+        start_time = time.time()
+        
+        try:
+            # Extract metadata
+            video_id = int(frame_data.get(b'video_id', 0))
+            frame_number = int(frame_data.get(b'frame_number', 0))
+            timestamp = int(frame_data.get(b'timestamp', 0))
+            
+            # Decode configuration
+            config_json = frame_data.get(b'config', b'{}')
+            config_data = json.loads(config_json)
+            
+            roi_polygon = config_data.get('roi_polygon')
+            homography_matrix = config_data.get('homography_matrix')
+            fps = config_data.get('fps', 30.0)
+            video_path = config_data.get('video_path')  # Full CSR: get video path from config
+            
+            # Backward compatibility: If video_path not in config, check cache then database
+            if not video_path:
+                # Check cache first (avoid DB query if already cached)
+                if video_id in self.video_path_cache:
+                    video_path = self.video_path_cache[video_id]
+                else:
+                    # Cache miss - query database once per video
+                    print(f"⚠️ video_path missing in config for video {video_id}, fetching from database...")
+                    video_path = self.get_video_path_from_db(video_id)
+                    
+                    if not video_path:
+                        raise ValueError(f"No video_path in config and failed to fetch from database for video {video_id}")
+            
+            # Full CSR: Read frame directly from video file (NO BASE64!)
+            frame = self.read_frame_from_video(video_id, video_path, frame_number)
+            
+            if frame is None:
+                raise ValueError(f"Failed to read frame {frame_number} from {video_path}")
+            
+            # Get original resolution
+            original_height, original_width = frame.shape[:2]
+            
+            # Convert to RGB for YOLO
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+            # 1. YOLO Detection (at ORIGINAL resolution)
+            detections = self.detector.detect(frame_rgb)
+            
+            # 2. Filter by ROI
+            if roi_polygon and len(roi_polygon) > 0:
+                filtered_detections = []
+                for detection in detections:
+                    bbox, conf, class_id = detection
+                    x1, y1, x2, y2 = bbox
+                    center_x = (x1 + x2) / 2
+                    center_y = y2  # Bottom center
+                    
+                    if self._point_in_polygon((center_x, center_y), roi_polygon):
+                        filtered_detections.append(detection)
+                detections = filtered_detections
+            
+            # 3. Tracking
+            tracks = self.tracker.update(frame_rgb, detections)
+            
+            # 4. Speed Estimation
+            speeds = {}
+            estimator = self.get_speed_estimator(video_id, homography_matrix, fps)
+            if estimator:
+                speeds = estimator.update(tracks, frame_number)
+            
+            # 5. Build LIGHTWEIGHT metadata (NO IMAGE DATA)
+            vehicles = []
+            for track_id, bbox in tracks:
+                x1, y1, x2, y2 = bbox
+                speed = speeds.get(track_id, 0.0)
+                
+                # Find original detection for confidence and class_id
+                class_id = 2  # Default: car
+                confidence = 0.9
+                for det_bbox, det_conf, det_class in detections:
+                    if self._bbox_iou(bbox, det_bbox) > 0.5:
+                        class_id = int(det_class)
+                        confidence = float(det_conf)
+                        break
+                
+                vehicles.append({
+                    'track_id': int(track_id),
+                    'bbox': {
+                        'x1': int(x1),
+                        'y1': int(y1),
+                        'x2': int(x2),
+                        'y2': int(y2)
+                    },
+                    'class_id': class_id,
+                    'confidence': round(confidence, 2),
+                    'speed': round(speed, 1),
+                    'speed_unit': config.SPEED_UNIT
+                })
+            
+            processing_time = (time.time() - start_time) * 1000
+            
+            # Return METADATA ONLY (2-3 KB vs 2 MB)
+            result = {
+                'video_id': video_id,
+                'frame_number': frame_number,
+                'timestamp': timestamp,
+                'original_resolution': {
+                    'width': original_width,
+                    'height': original_height
+                },
+                'vehicles': vehicles,
+                'total_vehicles': len(vehicles),
+                'processing_time_ms': round(processing_time, 1),
+                'has_homography': homography_matrix is not None,
+                'roi_polygon': roi_polygon
+            }
+            
+            return result
+            
+        except Exception as e:
+            print(f"❌ Error processing frame {frame_number}: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'video_id': video_id,
+                'frame_number': frame_number,
+                'error': str(e)
+            }
+    
+    def _point_in_polygon(self, point, polygon):
+        """Ray casting algorithm for point-in-polygon test"""
+        x, y = point
+        n = len(polygon)
+        inside = False
+        
+        p1x, p1y = polygon[0]
+        for i in range(1, n + 1):
+            p2x, p2y = polygon[i % n]
+            if y > min(p1y, p2y):
+                if y <= max(p1y, p2y):
+                    if x <= max(p1x, p2x):
+                        if p1y != p2y:
+                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                        if p1x == p2x or x <= xinters:
+                            inside = not inside
+            p1x, p1y = p2x, p2y
+        
+        return inside
+    
+    def _bbox_iou(self, boxA, boxB):
+        """Calculate IoU between two bounding boxes"""
+        xA = max(boxA[0], boxB[0])
+        yA = max(boxA[1], boxB[1])
+        xB = min(boxA[2], boxB[2])
+        yB = min(boxA[3], boxB[3])
+        
+        interArea = max(0, xB - xA) * max(0, yB - yA)
+        
+        boxAArea = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
+        boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
+        
+        iou = interArea / float(boxAArea + boxBArea - interArea)
+        return iou
+    
+    def start_processing(self):
+        """Main processing loop"""
+        print("🎬 Starting frame processing...\n")
+        
+        last_id = '>'
+        frame_count = 0
+        processed_count = 0
+        
+        while True:
+            try:
+                # Read from Redis Stream
+                messages = self.redis_client.xreadgroup(
+                    groupname='processor-group',
+                    consumername='processor-1',
+                    streams={REDIS_INPUT_STREAM: last_id},
+                    count=1,
+                    block=1000
+                )
+                
+                if not messages:
+                    continue
+                
+                for stream_name, stream_messages in messages:
+                    for message_id, frame_data in stream_messages:
+                        frame_count += 1
+                        
+                        # Frame skipping for performance
+                        if frame_count % PROCESS_EVERY_N_FRAMES != 0:
+                            # Acknowledge skipped frame
+                            self.redis_client.xack(REDIS_INPUT_STREAM, 'processor-group', message_id)
+                            continue
+                        
+                        # Process frame
+                        result = self.process_frame(frame_data)
+                        processed_count += 1
+                        
+                        # Send METADATA ONLY to output stream
+                        # Redis XADD requires flat key-value pairs (no nested dicts)
+                        # JSON-serialize nested structures
+                        redis_message = {
+                            'video_id': str(result['video_id']),
+                            'frame_number': str(result['frame_number']),
+                            'timestamp': str(result.get('timestamp', 0)),
+                            'vehicles': json.dumps(result.get('vehicles', [])),
+                            'total_vehicles': str(result.get('total_vehicles', 0)),
+                            'processing_time_ms': str(result.get('processing_time_ms', 0)),
+                            'original_resolution': json.dumps(result.get('original_resolution', {})),
+                            'has_homography': str(result.get('has_homography', False)),
+                            'roi_polygon': json.dumps(result.get('roi_polygon')) if result.get('roi_polygon') else '[]',
+                            'error': str(result.get('error', '')) if 'error' in result else ''
+                        }
+                        
+                        self.redis_client.xadd(
+                            REDIS_OUTPUT_STREAM,
+                            redis_message,
+                            maxlen=1000
+                        )
+                        
+                        # Acknowledge message
+                        self.redis_client.xack(REDIS_INPUT_STREAM, 'processor-group', message_id)
+                        
+                        # Progress logging (each frame)
+                        print(f"✓ Frame {result['frame_number']} | video {result['video_id']} | {result.get('total_vehicles', 0)} vehicles | {result['processing_time_ms']:.1f}ms")
+            
+            except KeyboardInterrupt:
+                print("\n🛑 Shutting down processor...")
+                break
+            except Exception as e:
+                print(f"❌ Processing error: {e}")
+                time.sleep(1)
 
 if __name__ == "__main__":
-    main()
+    processor = FrameProcessor()
+    processor.start_processing()

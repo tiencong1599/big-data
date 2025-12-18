@@ -174,6 +174,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -181,6 +183,12 @@ services:
       REDIS_OUTPUT_STREAM: processed-frames
       DEVICE: cuda:0  # GPU device
       ENABLE_VEHICLE_DETECTION: "true"
+      # Database connection (for backward compatibility - fetching video paths)
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: video_streaming
+      DB_USER: postgres
+      DB_PASSWORD: postgres
     security_opt:
       - seccomp:unconfined
     # GPU support using NVIDIA Container Toolkit
@@ -196,6 +204,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./spark:/app
+      - video_storage:/app/video_storage
 
   # Frontend
   frontend:

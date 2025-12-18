@@ -9,6 +9,7 @@ from handlers.websocket_routing import get_websocket_handlers
 from handlers.video_handler import VideoUploadHandler, VideoListHandler, VideoDetailHandler
 from handlers.stream_handler import StreamHandler
 from handlers.producer_handler import ProducerHandler
+from handlers.video_stream_handler import VideoStreamHandler
 from models.video import init_db
 from config.settings import SERVER_PORT, ALLOWED_ORIGINS
 
@@ -35,6 +36,9 @@ class Application(tornado.web.Application):
             # Streaming
             (r"/api/stream/start", StreamHandler),
             (r"/api/producer/stream", ProducerHandler),
+            
+            # MJPEG Video Stream (Full CSR)
+            (r"/api/video/stream/(\d+)", VideoStreamHandler),
             
             # WebSocket handlers (new routing system)
             *get_websocket_handlers(),
