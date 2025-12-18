@@ -313,3 +313,48 @@ class VideoDetailHandler(BaseHandler):
             logger.error(f"Get video detail failed: {str(e)}", exc_info=True)
             self.set_status(500)
             self.write({'error': str(e)})
+
+class VideoHandler(tornado.web.RequestHandler):
+    # ...existing methods...
+    
+    async def delete(self, video_id):
+        """Delete video by ID"""
+        self.set_default_headers()
+        
+        try:
+            db = SessionLocal()
+            
+            # Get video record
+            video = db.query(Video).filter(Video.id == video_id).first()
+            
+            if not video:
+                self.set_status(404)
+                self.write({"error": "Video not found"})
+                return
+            
+            # Delete physical file
+            video_path = video.file_path
+            if os.path.exists(video_path):
+                try:
+                    os.remove(video_path)
+                    print(f"✓ Deleted file: {video_path}")
+                except Exception as e:
+                    print(f"⚠️ Warning: Could not delete file {video_path}: {e}")
+            
+            # Delete database record
+            db.delete(video)
+            db.commit()
+            
+            print(f"✓ Deleted video ID {video_id} from database")
+            
+            self.write({
+                "message": "Video deleted successfully",
+                "video_id": int(video_id)
+            })
+            
+        except Exception as e:
+            print(f"❌ Error deleting video: {e}")
+            self.set_status(500)
+            self.write({"error": str(e)})
+        finally:
+            db.close()

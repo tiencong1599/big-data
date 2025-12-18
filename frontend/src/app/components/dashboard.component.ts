@@ -12,23 +12,27 @@ export class DashboardComponent implements OnInit {
   selectedVideo: Video | null = null;
   loading = false;
   error: string | null = null;
+  
+  // NEW: Delete confirmation
+  showDeleteConfirm = false;
+  videoToDelete: Video | null = null;
 
-  constructor(private videoService: VideoService) { }
+  constructor(private videoService: VideoService) {}
 
-  ngOnInit(): void {
+  ngOnInit() {
     this.loadVideos();
   }
 
-  loadVideos(): void {
+  loadVideos() {
     this.loading = true;
     this.error = null;
     
     this.videoService.getVideos().subscribe({
-      next: (response: { videos: Video[], count: number }) => {
-        this.videos = response.videos;
+      next: (videos) => {
+        this.videos = videos;
         this.loading = false;
       },
-      error: (err: any) => {
+      error: (err) => {
         this.error = 'Failed to load videos';
         this.loading = false;
         console.error('Error loading videos:', err);
@@ -36,15 +40,57 @@ export class DashboardComponent implements OnInit {
     });
   }
 
-  selectVideo(video: Video): void {
+  selectVideo(video: Video) {
     this.selectedVideo = video;
   }
 
-  closeVideoPanel(): void {
+  closeDetail() {
     this.selectedVideo = null;
   }
 
-  onVideoUploaded(): void {
+  onVideoUploaded() {
     this.loadVideos();
+  }
+  
+  // NEW: Delete Video Methods
+  confirmDelete(video: Video, event: Event) {
+    event.stopPropagation(); // Prevent video selection
+    this.videoToDelete = video;
+    this.showDeleteConfirm = true;
+  }
+  
+  cancelDelete() {
+    this.showDeleteConfirm = false;
+    this.videoToDelete = null;
+  }
+  
+  deleteVideo() {
+    if (!this.videoToDelete) return;
+    
+    const videoId = this.videoToDelete.id;
+    
+    this.videoService.deleteVideo(videoId).subscribe({
+      next: () => {
+        console.log(`✓ Video ${videoId} deleted successfully`);
+        
+        // Remove from local array (no page refresh needed)
+        this.videos = this.videos.filter(v => v.id !== videoId);
+        
+        // Close detail panel if deleted video was selected
+        if (this.selectedVideo?.id === videoId) {
+          this.selectedVideo = null;
+        }
+        
+        // Close confirmation dialog
+        this.showDeleteConfirm = false;
+        this.videoToDelete = null;
+      },
+      error: (err) => {
+        console.error('Error deleting video:', err);
+        alert(`Failed to delete video: ${err.error?.error || err.message}`);
+        this.showDeleteConfirm = false;
+        this.videoToDelete = null;
+      }
+    });
   }
 }

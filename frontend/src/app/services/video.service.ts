@@ -88,4 +88,12 @@ export class VideoService {
       tap((response: any) => console.log('[VIDEO-SERVICE] Stream stopped:', response))
     );
   }
+
+  // NEW: Delete Video
+  deleteVideo(id: number): Observable<any> {
+    console.log('[VIDEO-SERVICE] Deleting video:', id);
+    return this.http.delete(`${this.apiUrl}/videos/${id}`).pipe(
+      tap((response: any) => console.log('[VIDEO-SERVICE] Video deleted:', response))
+    );
+  }
 }

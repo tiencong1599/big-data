@@ -5,7 +5,7 @@
   </div>
 
   <div class="detail-content">
-    <!-- Video Information -->
+    <!-- Video Information (HIDE ROI, File Path, Calibrate Coordinates) -->
     <div class="info-section">
       <h3>Video Information</h3>
       
@@ -13,29 +13,22 @@
         <label>Name:</label>
         <span>{{ video.name }}</span>
       </div>
-
+      
       <div class="info-row">
-        <label>File Path:</label>
-        <span class="file-path">{{ video.file_path }}</span>
+        <label>FPS:</label>
+        <span>{{ video.fps }}</span>
       </div>
-
-      <div class="info-row">
-        <label>Created:</label>
+      
+      <div class="info-row" *ngIf="video.created_at">
+        <label>Uploaded:</label>
         <span>{{ video.created_at | date:'medium' }}</span>
       </div>
-
-      <div class="info-row" *ngIf="video.roi">
-        <label>ROI (Region of Interest):</label>
-        <pre class="json-display">{{ formatJSON(video.roi) }}</pre>
-      </div>
-
-      <div class="info-row" *ngIf="video.calibrate_coordinates">
-        <label>Calibrate Coordinates:</label>
-        <pre class="json-display">{{ formatJSON(video.calibrate_coordinates) }}</pre>
-      </div>
+      
+      <!-- REMOVED: File Path, ROI, Calibrate Coordinates -->
+      <!-- These are kept in the API response but hidden from UI -->
     </div>
 
-    <!-- Stream Section -->
+    <!-- Stream Section (KEEP AS-IS) -->
     <div class="stream-section">
       <div class="stream-controls">
         <button 

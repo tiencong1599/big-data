@@ -6,7 +6,7 @@ from tornado.options import define, options
 import logging
 import sys
 from handlers.websocket_routing import get_websocket_handlers
-from handlers.video_handler import VideoUploadHandler, VideoListHandler, VideoDetailHandler
+from handlers.video_handler import VideoUploadHandler, VideoListHandler, VideoDetailHandler, VideoHandler
 from handlers.stream_handler import StreamHandler
 from handlers.producer_handler import ProducerHandler
 from models.video import init_db
@@ -38,6 +38,10 @@ class Application(tornado.web.Application):
             
             # WebSocket handlers (new routing system)
             *get_websocket_handlers(),
+            (r"/api/videos", VideoListHandler),
+            (r"/api/videos/upload", VideoUploadHandler),
+            (r"/api/videos/(\d+)", VideoHandler),  # GET, DELETE
+            (r"/api/stream/start", StreamHandler),
         ]
         
         settings = {

@@ -1,45 +1,79 @@
 <div class="dashboard-container">
-  <div class="header">
-    <h1>Video Streaming Dashboard</h1>
-    <app-video-upload (videoUploaded)="onVideoUploaded()"></app-video-upload>
-  </div>
+  <div class="main-content" [class.split-view]="selectedVideo">
+    <div class="videos-section">
+      <div class="header">
+        <h1>Video Dashboard</h1>
+        <app-video-upload (videoUploaded)="onVideoUploaded()"></app-video-upload>
+      </div>
 
-  <div class="content" [class.split-view]="selectedVideo">
-    <!-- Video List Panel -->
-    <div class="video-list-panel">
-      <h2>All Videos ({{ videos.length }})</h2>
-      
-      <div *ngIf="loading" class="loading">Loading videos...</div>
-      
-      <div *ngIf="error" class="error">{{ error }}</div>
-      
-      <div class="video-grid">
+      <div *ngIf="loading" class="loading">
+        <div class="spinner"></div>
+        <p>Loading videos...</p>
+      </div>
+
+      <div *ngIf="error" class="error-message">
+        {{ error }}
+      </div>
+
+      <div class="videos-grid" *ngIf="!loading && !error">
         <div 
           *ngFor="let video of videos" 
           class="video-card"
           [class.selected]="selectedVideo?.id === video.id"
           (click)="selectVideo(video)">
+          
           <div class="video-thumbnail">
-            <div class="video-icon">🎥</div>
+            <div class="thumbnail-placeholder">
+              <span class="video-icon">🎬</span>
+            </div>
           </div>
+          
           <div class="video-info">
             <h3>{{ video.name }}</h3>
-            <p class="video-date">{{ video.created_at | date:'short' }}</p>
+            <p class="video-meta">
+              <span>FPS: {{ video.fps }}</span>
+              <span *ngIf="video.created_at">
+                {{ video.created_at | date:'short' }}
+              </span>
+            </p>
           </div>
+          
+          <!-- NEW: Delete Button -->
+          <button 
+            class="btn-delete-video"
+            (click)="confirmDelete(video, $event)"
+            title="Delete Video">
+            🗑️
+          </button>
         </div>
-      </div>
-      
-      <div *ngIf="!loading && videos.length === 0" class="empty-state">
-        <p>No videos available. Upload a video to get started.</p>
+
+        <div *ngIf="videos.length === 0" class="empty-state">
+          <div class="empty-icon">📹</div>
+          <h3>No Videos Yet</h3>
+          <p>Upload your first video to get started</p>
+        </div>
       </div>
     </div>
 
-    <!-- Video Detail Panel -->
-    <div *ngIf="selectedVideo" class="video-detail-panel">
+    <div class="detail-panel" *ngIf="selectedVideo">
       <app-video-detail 
-        [video]="selectedVideo" 
-        (close)="closeVideoPanel()">
+        [video]="selectedVideo"
+        (close)="closeDetail()">
       </app-video-detail>
+    </div>
+  </div>
+</div>
+
+<!-- NEW: Delete Confirmation Modal -->
+<div class="modal-overlay" *ngIf="showDeleteConfirm" (click)="cancelDelete()">
+  <div class="modal-content delete-confirm" (click)="$event.stopPropagation()">
+    <h3>⚠️ Delete Video?</h3>
+    <p>Are you sure you want to delete <strong>{{ videoToDelete?.name }}</strong>?</p>
+    <p class="warning-text">This action cannot be undone. The video file and all associated data will be permanently deleted.</p>
+    
+    <div class="modal-actions">
+      <button class="btn-cancel" (click)="cancelDelete()">Cancel</button>
+      <button class="btn-delete" (click)="deleteVideo()">Delete</button>
     </div>
   </div>
 </div>

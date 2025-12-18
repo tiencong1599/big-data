@@ -14,7 +14,7 @@ from config.settings import ALLOWED_ORIGINS
 # ============================================================================
 
 # Structure: { 'processed_frame_1': [ws_conn1, ws_conn2], 'processed_frame_2': [...] }
-client_subscriptions: Dict[str, List[tornado.websocket.WebSocketHandler]] = {}
+client_subscriptions: Dict[str, Set[tornado.websocket.WebSocketHandler]] = {}
 
 # Track active streams
 active_streams: Set[int] = set()
@@ -76,13 +76,18 @@ class BackendProcessedFrameHandler(tornado.websocket.WebSocketHandler):
                 
                 print(f"[BACKEND-CHANNEL] Routing frame {frame_number} to channel '{channel_name}'")
                 
+                # CRITICAL OPTIMIZATION: Check if anyone is subscribed
+                if channel_name not in client_subscriptions or len(client_subscriptions[channel_name]) == 0:
+                    # NO SUBSCRIBERS - SKIP PROCESSING
+                    return
+                
                 # Get subscribed clients
                 if channel_name in client_subscriptions:
                     clients = client_subscriptions[channel_name]
                     print(f"[BACKEND-CHANNEL] Broadcasting to {len(clients)} client(s)")
                     
                     # Broadcast to all subscribed clients
-                    dead_clients = []
+                    dead_clients = set()
                     for client_ws in clients:
                         try:
                             message_to_send = {
@@ -96,11 +101,11 @@ class BackendProcessedFrameHandler(tornado.websocket.WebSocketHandler):
                             print(f"[BACKEND-CHANNEL] Error sending to client: {e}")
                             import traceback
                             traceback.print_exc()
-                            dead_clients.append(client_ws)
+                            dead_clients.add(client_ws)
                     
                     # Remove dead connections
                     for dead_client in dead_clients:
-                        clients.remove(dead_client)
+                        clients.discard(dead_client)
                     
                 else:
                     print(f"[BACKEND-CHANNEL] Warning: No clients subscribed to '{channel_name}'")
@@ -138,131 +143,60 @@ class ClientFrameHandler(tornado.websocket.WebSocketHandler):
     
     def check_origin(self, origin):
         """Allow connections from frontend"""
-        return True
+        is_allowed = origin in ALLOWED_ORIGINS or "*" in ALLOWED_ORIGINS
+        
+        if not is_allowed:
+            print(f"[CLIENT-CHANNEL] ❌ REJECTED connection from origin: {origin}")
+        return is_allowed
     
     def open(self):
         """
         Frontend client connects and subscribes to specific video channel
         """
-        # Extract video_id from query parameter
-        video_id = self.get_argument('video_id', None)
-        
-        if not video_id:
-            print("[CLIENT-CHANNEL] Error: Missing video_id parameter")
-            self.close(1008, "video_id is required")
-            return
-        
-        try:
-            self.video_id = int(video_id)
-            self.channel_name = f"processed_frame_{self.video_id}"
-            
-            # Register this connection to the channel
-            if self.channel_name not in client_subscriptions:
-                client_subscriptions[self.channel_name] = []
-            
-            client_subscriptions[self.channel_name].append(self)
-            
-            print(f"[CLIENT-CHANNEL] Client subscribed to '{self.channel_name}'")
-            print(f"[CLIENT-CHANNEL] Total subscribers on '{self.channel_name}': {len(client_subscriptions[self.channel_name])}")
-            
-            # Send placeholder frame immediately
-            placeholder_data = {
-                'video_id': self.video_id,
-                'frame_number': 0,
-                'processed_frame': self._generate_placeholder_frame(),
-                'message': 'Waiting for stream to start...',
-                'vehicles': [],
-                'total_vehicles': 0
-            }
-            
-            self.write_message(json.dumps({
-                'type': 'placeholder',
-                'data': placeholder_data
-            }))
-            
-            print(f"[CLIENT-CHANNEL] Sent placeholder frame to client for video {self.video_id}")
-        
-        except ValueError:
-            print(f"[CLIENT-CHANNEL] Error: Invalid video_id '{video_id}'")
-            self.close(1008, "Invalid video_id")
+        print("[CLIENT-CHANNEL] Client connected")
     
     def on_message(self, message):
         """
-        Handle messages from client (e.g., ping/pong, commands)
+        Handle subscription requests
         """
         try:
             data = json.loads(message)
+            action = data.get('action')
+            channel = data.get('channel')
             
-            if data.get('type') == 'ping':
-                # Respond to ping
-                self.write_message(json.dumps({'type': 'pong'}))
+            if action == 'subscribe':
+                if channel not in client_subscriptions:
+                    client_subscriptions[channel] = set()
+                client_subscriptions[channel].add(self)
+                print(f"[CLIENT-CHANNEL] Client subscribed to '{channel}' | Total: {len(client_subscriptions[channel])}")
             
-            elif data.get('type') == 'status_request':
-                # Send stream status
-                is_active = self.video_id in active_streams
-                self.write_message(json.dumps({
-                    'type': 'status_response',
-                    'data': {
-                        'video_id': self.video_id,
-                        'is_streaming': is_active
-                    }
-                }))
+            elif action == 'unsubscribe':
+                if channel in client_subscriptions:
+                    client_subscriptions[channel].discard(self)
+                    print(f"[CLIENT-CHANNEL] Client unsubscribed from '{channel}' | Remaining: {len(client_subscriptions[channel])}")
+                    
+                    # Clean up empty channels
+                    if len(client_subscriptions[channel]) == 0:
+                        del client_subscriptions[channel]
+                        print(f"[CLIENT-CHANNEL] Channel '{channel}' removed (no subscribers)")
         
         except Exception as e:
-            print(f"[CLIENT-CHANNEL] Error processing client message: {e}")
+            print(f"[CLIENT-CHANNEL] Error processing message: {e}")
     
     def on_close(self):
         """
         Remove this connection from subscriptions when client disconnects
         """
-        if hasattr(self, 'channel_name') and self.channel_name in client_subscriptions:
-            try:
-                client_subscriptions[self.channel_name].remove(self)
-                remaining = len(client_subscriptions[self.channel_name])
+        # Remove this client from all channels
+        for channel in list(client_subscriptions.keys()):
+            if self in client_subscriptions[channel]:
+                client_subscriptions[channel].discard(self)
+                print(f"[CLIENT-CHANNEL] Client disconnected from '{channel}'")
                 
-                print(f"[CLIENT-CHANNEL] Client unsubscribed from '{self.channel_name}'")
-                print(f"[CLIENT-CHANNEL] Remaining subscribers on '{self.channel_name}': {remaining}")
-                
-                # Clean up empty channel
-                if remaining == 0:
-                    del client_subscriptions[self.channel_name]
-                    print(f"[CLIENT-CHANNEL] Channel '{self.channel_name}' deleted (no subscribers)")
-            
-            except ValueError:
-                # Connection already removed
-                pass
-    
-    def _generate_placeholder_frame(self) -> str:
-        """
-        Generate a base64-encoded placeholder image
-        Shows "Waiting for stream..." message
-        """
-        # Create blank frame (640x480, black background)
-        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                if len(client_subscriptions[channel]) == 0:
+                    del client_subscriptions[channel]
         
-        # Add text
-        text = "Waiting for stream to start..."
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.8
-        thickness = 2
-        color = (255, 255, 255)  # White
-        
-        # Get text size for centering
-        text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
-        text_x = (frame.shape[1] - text_size[0]) // 2
-        text_y = (frame.shape[0] + text_size[1]) // 2
-        
-        cv2.putText(frame, text, (text_x, text_y), font, font_scale, color, thickness)
-        
-        # Add video ID info
-        info_text = f"Video ID: {self.video_id}"
-        cv2.putText(frame, info_text, (20, 40), font, 0.6, (180, 180, 180), 1)
-        
-        # Encode to JPEG
-        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        
-        # Convert to base64
-        return base64.b64encode(buffer).decode('utf-8')
+        print("[CLIENT-CHANNEL] Client fully disconnected")
 
 
 # ============================================================================

@@ -1,24 +1,28 @@
-from sqlalchemy import Column, Integer, String, DateTime, JSON, Float
+from sqlalchemy import Column, Integer, String, DateTime, JSON, Float, ForeignKey, TIMESTAMP
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import engine, get_db
 
 Base = declarative_base()
 
 class Video(Base):
-    __tablename__ = 'videos'
+    __tablename__ = 'video'
     
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(255), nullable=False)
-    file_path = Column(String(500), nullable=False)
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    file_path = Column(String, nullable=False)
     roi = Column(JSON, nullable=True)  # ROI polygon coordinates
     calibrate_coordinates = Column(JSON, nullable=True)  # Camera calibration data
     homography_matrix = Column(JSON, nullable=True)  # Homography matrix H
     camera_matrix = Column(JSON, nullable=True)  # Camera intrinsic matrix K
-    fps = Column(Float, default=30.0)  # Video FPS
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    fps = Column(Float, nullable=True)  # Video FPS
+    created_at = Column(TIMESTAMP, default=datetime.utcnow)
+    updated_at = Column(TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
     
+    # Relationship
+    analytics = relationship("VideoAnalytics", back_populates="video", cascade="all, delete-orphan")
+
     def to_dict(self):
         return {
             'id': self.id,
@@ -80,3 +84,18 @@ def get_video_config(video_id):
         }
     finally:
         db.close()
+
+# NEW TABLE: VideoAnalytics
+class VideoAnalytics(Base):
+    __tablename__ = 'video_analytics'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    video_id = Column(Integer, ForeignKey('video.id'), nullable=False)
+    total_vehicles_count = Column(Integer, default=0)
+    avg_dwell_time = Column(Float, default=0.0)  # seconds
+    vehicle_type_distribution = Column(JSON, nullable=True)  # {"car": 10, "truck": 5, ...}
+    processed_at = Column(Float, nullable=False)  # Unix timestamp
+    created_at = Column(TIMESTAMP, default=datetime.utcnow)
+    
+    # Relationship
+    video = relationship("Video", back_populates="analytics")
