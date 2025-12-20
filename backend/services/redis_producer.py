@@ -5,6 +5,7 @@ import time
 import redis
 import os
 from models.video import get_video_config
+from performance_instrumentation import timeit
 
 REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
 REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
@@ -22,6 +23,7 @@ class VideoFrameProducer:
         )
         print(f"[REDIS-PRODUCER] Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
     
+    @timeit
     def stream_video(self, video_id, video_path):
         """Stream video frames with configuration to Redis Streams"""
         cap = cv2.VideoCapture(video_path)
@@ -36,7 +38,7 @@ class VideoFrameProducer:
             
             # Reduce quality + resize for faster processing
             # frame = cv2.resize(frame, (640, 480))
-            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
+            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 40])
             frame_base64 = base64.b64encode(buffer).decode('utf-8')
             
             # Prepare message with full configuration from database

@@ -52,6 +52,9 @@ class ResultConsumer:
         self.ws = None
         self.reconnect_delay = 5
         self.last_id = '>'  # Read only new messages
+        
+        # Subscription cache key prefix (matches backend)
+        self.subscription_cache_prefix = 'websocket:subscription:video:'
     
     def connect_to_backend(self):
         """Establish WebSocket connection to backend unified channel"""
@@ -76,6 +79,25 @@ class ResultConsumer:
                     time.sleep(self.reconnect_delay)
         
         return False
+    
+    def has_subscribers(self, video_id):
+        """Check if video has any subscribers by checking Redis cache"""
+        try:
+            cache_key = f"{self.subscription_cache_prefix}{video_id}"
+            # Check if key exists in Redis
+            result = self.redis_client.get(cache_key)
+            
+            if result is None:
+                # No cache entry means no subscribers
+                return False
+            
+            # Cache exists and value is 'true'
+            return result == 'true'
+            
+        except Exception as e:
+            # On error, default to True (fail-safe: send frames)
+            print(f"[SUBSCRIPTION-CHECK] Error checking Redis cache for video {video_id}: {e}")
+            return True
     
     def start_consuming(self):
         """Consume processed frames from Redis Streams and send to backend via WebSocket"""
@@ -111,10 +133,18 @@ class ResultConsumer:
                             # Parse frame data
                             video_id = message_data.get('video_id')
                             frame_number = message_data.get('frame_number', 'unknown')
+                            video_id_int = int(video_id) if video_id else None
+                            
+                            # OPTIMIZATION: Check Redis cache for subscribers before forwarding
+                            if video_id_int and not self.has_subscribers(video_id_int):
+                                # Acknowledge message without forwarding
+                                self.redis_client.xack(REDIS_RESULT_STREAM, 'redis-consumer-group', message_id)
+                                # Skip forwarding silently (no active subscribers)
+                                continue
                             
                             # Reconstruct full frame data
                             frame_data = {
-                                'video_id': int(video_id) if video_id else None,
+                                'video_id': video_id_int,
                                 'frame_number': int(frame_number) if frame_number.isdigit() else frame_number,
                                 'timestamp': int(message_data.get('timestamp', 0)),
                                 'processed_frame': message_data.get('processed_frame', ''),
@@ -178,5 +208,10 @@ class ResultConsumer:
         print(f"\nTotal frames forwarded: {frame_count}")
 
 if __name__ == "__main__":
-    consumer = ResultConsumer()
-    consumer.start_consuming()
+    try:
+        # Khởi tạo consumer
+        consumer = ResultConsumer()
+        # Bắt đầu lắng nghe
+        consumer.start_consuming()
+    except Exception as e:
+        print(f"Fatal Error: {e}")

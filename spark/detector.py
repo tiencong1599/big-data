@@ -3,6 +3,7 @@ import numpy as np
 import config
 import os
 import time
+from performance_instrumentation import timeit
 
 # Import TensorRT libraries
 try:
@@ -77,6 +78,7 @@ class VehicleDetector:
         # Cache warm-up (optional)
         print("✓ Detector initialized successfully.")
 
+    @timeit
     def preprocess(self, image):
         # Logic preprocess Letterbox của bạn
         input_h = self.input_shape[2] if self.input_shape[2] > 0 else 640
@@ -99,6 +101,7 @@ class VehicleDetector:
         
         return blob, scale, (input_w, input_h)
 
+    @timeit
     def detect(self, image):
         """
         Hàm này thay thế cho infer().

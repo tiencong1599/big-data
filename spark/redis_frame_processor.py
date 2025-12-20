@@ -64,6 +64,9 @@ class FrameProcessor:
     def process_frame(self, frame_data):
         """Process a single frame with vehicle detection and tracking"""
         global detector, tracker, speed_estimators
+
+        timing = {}
+        frame_start = time.time()
         
         try:
             # Initialize models if needed
@@ -108,8 +111,10 @@ class FrameProcessor:
             print(f"Processing frame {frame_number} for video {video_id}")
             print(f"  Config: ROI={frame_config.get('use_roi')}, H={frame_config.get('use_homography')}, FPS={frame_config.get('fps')}")
             
+            t0 = time.time()
             # Decode frame
             frame = self.decode_from_base64(frame_base64)
+            timing['decode'] = (time.time() - t0) * 1000
             
             # Get configuration
             use_roi = frame_config.get('use_roi', False)
@@ -148,10 +153,14 @@ class FrameProcessor:
             speed_estimator = speed_estimators[video_id]
             
             # 1. Detect vehicles
+            t0 = time.time()
             detections = detector.detect(frame)
+            timing['detection'] = (time.time() - t0) * 1000
+            timing['detection_count'] = len(detections)
             print(f"  Frame {frame_number}: {len(detections)} detections from YOLO")
             
             # 2. Apply ROI filter if enabled (TEMPORARILY DISABLED FOR DEBUGGING)
+            t0 = time.time()
             if use_roi and roi_polygon and len(roi_polygon) > 0:
                 print(f"  Frame dimensions: {frame.shape[1]}x{frame.shape[0]} (WxH)")
                 print(f"  ROI polygon: {roi_polygon}")
@@ -179,17 +188,26 @@ class FrameProcessor:
                         
                 detections = filtered_detections
                 print(f"  After ROI filter: {len(detections)} detections remain")
-            
+
+            timing['roi_filter'] = (time.time() - t0) * 1000
+            timing['roi_filtered_count'] = len(detections)
+
             # 3. Track vehicles
+            t0 = time.time()
             tracks = tracker.update(frame, detections)
             print(f"  Active tracks: {len(tracks)}")
+            timing['tracking'] = (time.time() - t0) * 1000
+            timing['track_count'] = len(tracks)
             
             # 4. Estimate speeds (update with all tracks at once)
+            t0 = time.time()
             speeds = speed_estimator.update(tracks, frame_number)
             if speeds:
                 print(f"  Speeds: {[(tid, f'{s:.1f}') for tid, s in speeds.items()]}")
+            timing['speed_estimation'] = (time.time() - t0) * 1000
             
             # 5. Prepare vehicle data
+            t0 = time.time()
             vehicles = []
             for track_id, bbox in tracks:
                 x1, y1, x2, y2 = bbox
@@ -206,13 +224,16 @@ class FrameProcessor:
                     'speed': float(speed),
                     'speed_unit': config.SPEED_UNIT
                 })
-            
+            timing['build_data'] = (time.time() - t0) * 1000
+
             # Get analytics tracker
+            t0 = time.time()
             tracker_instance = self.get_analytics_tracker(video_id)
-            
+
             # Update analytics with current tracks
             tracker_instance.update(tracks, timestamp / 1000)  # Convert ms to seconds
-            
+            timing['analytics'] = (time.time() - t0) * 1000
+
             # Set vehicle types
             for track_id, bbox in tracks:
                 for det_bbox, det_conf, det_class in detections:
@@ -221,16 +242,45 @@ class FrameProcessor:
                         break
             
             # 6. Visualization
+            t0 = time.time()
             annotated_frame = visualizer.draw_results(frame, tracks, speeds)
-            
+            timing['visualization'] = (time.time() - t0) * 1000
+
             # Draw ROI polygon
             if roi_polygon and len(roi_polygon) > 0:
                 roi_points = np.array(roi_polygon, dtype=np.int32)
                 cv2.polylines(annotated_frame, [roi_points], True, (0, 255, 0), 2)
             
             # Encode result
+            t0 = time.time()
             processed_frame_base64 = self.encode_to_base64(annotated_frame)
+            timing['encode'] = (time.time() - t0) * 1000
+            timing['encoded_size_kb'] = len(processed_frame_base64) / 1024
+
+            total_time = (time.time() - frame_start) * 1000
             
+            timing['total'] = total_time
+            timing['theoretical_fps'] = 1000 / total_time if total_time > 0 else 0
+            
+            # ===================================================================
+            # PRINT DETAILED TIMING REPORT
+            # ===================================================================
+            print(f"\n{'='*70}")
+            print(f"[PERFORMANCE] Frame {frame_number} | Video {video_id}")
+            print(f"{'='*70}")
+            print(f"  Decode:           {timing['decode']:7.2f}ms")
+            print(f"  Detection:        {timing['detection']:7.2f}ms  ({timing['detection_count']} objects)")
+            print(f"  ROI Filter:       {timing['roi_filter']:7.2f}ms  ({timing['roi_filtered_count']} after filter)")
+            print(f"  Tracking:         {timing['tracking']:7.2f}ms  ({timing['track_count']} tracks)")
+            print(f"  Speed Estimation: {timing['speed_estimation']:7.2f}ms")
+            print(f"  Build Data:       {timing['build_data']:7.2f}ms")
+            print(f"  Visualization:    {timing['visualization']:7.2f}ms")
+            print(f"  Encode:           {timing['encode']:7.2f}ms  ({timing['encoded_size_kb']:.1f}KB)")
+            print(f"  Analytics:        {timing['analytics']:7.2f}ms")
+            print(f"  {'─'*70}")
+            print(f"  TOTAL:            {timing['total']:7.2f}ms  ({timing['theoretical_fps']:.1f} FPS)")
+            print(f"{'='*70}\n")
+
             result = {
                 'video_id': str(video_id),
                 'frame_number': str(frame_number),
@@ -355,7 +405,7 @@ def main():
                 consumername='processor-1',
                 streams={REDIS_INPUT_STREAM: last_id},
                 count=1,  # Process ONE frame at a time
-                block=1000  # 1 second timeout
+                block=100  # 0.1 second timeout
             )
             
             if not messages:
