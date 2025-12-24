@@ -1,134 +1,161 @@
 import { Injectable } from '@angular/core';
 import { Subject, Observable } from 'rxjs';
-import { ProcessedFrameData } from '../models/video.model';
+import { ProcessedFrameData, AnalyticsData } from '../models/video.model';
 
 @Injectable({
   providedIn: 'root'
 })
 export class WebsocketService {
-  private socket: WebSocket | null = null;
+  // Dual WebSocket connections
+  private frameSocket: WebSocket | null = null;
+  private analyticsSocket: WebSocket | null = null;
+  
+  // Separate observables for each channel
   private frameSubject = new Subject<ProcessedFrameData>();
+  private analyticsSubject = new Subject<AnalyticsData>();
+  
   public frames$ = this.frameSubject.asObservable();
-  private currentChannel: string | null = null;
-  private pendingSubscription: { channel: string } | null = null;
+  public analytics$ = this.analyticsSubject.asObservable();
+  
+  private currentVideoId: number | null = null;
 
   constructor() { }
 
-  subscribeToChannel(channelName: string, videoId: number): Observable<ProcessedFrameData> {
-    // Unsubscribe from previous channel if exists
-    if (this.socket && this.currentChannel && this.currentChannel !== channelName) {
-      console.log(`[WS-SERVICE] Unsubscribing from old channel: ${this.currentChannel}`);
-      this.unsubscribeFromChannel(this.currentChannel);
-    }
-
-    // Close existing connection if switching videos
-    if (this.socket && this.currentChannel !== channelName) {
-      console.log(`[WS-SERVICE] Closing previous connection`);
+  subscribeToVideo(videoId: number): { frames: Observable<ProcessedFrameData>, analytics: Observable<AnalyticsData> } {
+    // Disconnect existing connections if switching videos
+    if (this.currentVideoId !== null && this.currentVideoId !== videoId) {
+      console.log(`[WS-SERVICE] Switching from video ${this.currentVideoId} to ${videoId}`);
       this.disconnect();
     }
 
-    // Connect to WebSocket
-    const wsUrl = `ws://localhost:8686/ws/client/stream?video_id=${videoId}`;
-    console.log(`[WS-SERVICE] Connecting to: ${wsUrl}`);
+    this.currentVideoId = videoId;
     
-    this.socket = new WebSocket(wsUrl);
-    this.currentChannel = channelName;
+    // Connect to BOTH channels
+    this.connectFrameChannel(videoId);
+    this.connectAnalyticsChannel(videoId);
     
-    // Store pending subscription to send after connection opens
-    this.pendingSubscription = {
-      channel: channelName
+    return {
+      frames: this.frames$,
+      analytics: this.analytics$
     };
+  }
+  
+  private connectFrameChannel(videoId: number) {
+    const wsUrl = `ws://localhost:8686/ws/client/stream`;
+    const channelName = `processed_frame_${videoId}`;
+    
+    console.log(`[WS-FRAME] Connecting to: ${wsUrl}`);
+    
+    this.frameSocket = new WebSocket(wsUrl);
 
-    this.socket.onopen = () => {
-      console.log(`[WS-SERVICE] ✓ WebSocket connected`);
+    this.frameSocket.onopen = () => {
+      console.log(`[WS-FRAME] ✓ Connected`);
       
-      // CRITICAL FIX: Add delay to ensure connection is fully ready
       setTimeout(() => {
-        if (this.socket && this.socket.readyState === WebSocket.OPEN && this.pendingSubscription) {
+        if (this.frameSocket && this.frameSocket.readyState === WebSocket.OPEN) {
           const subscribeMessage = {
             action: 'subscribe',
-            channel: this.pendingSubscription.channel
+            channel: channelName
           };
           
-          console.log(`[WS-SERVICE] 📤 Sending subscription:`, subscribeMessage);
-          
-          try {
-            this.socket.send(JSON.stringify(subscribeMessage));
-            console.log(`[WS-SERVICE] ✅ Subscription message sent successfully`);
-            this.pendingSubscription = null;
-          } catch (error) {
-            console.error(`[WS-SERVICE] ❌ Failed to send subscription:`, error);
-          }
-        } else {
-          console.warn(`[WS-SERVICE] ⚠️ WebSocket not ready, state: ${this.socket?.readyState}`);
+          console.log(`[WS-FRAME] 📤 Subscribing to: ${channelName}`);
+          this.frameSocket.send(JSON.stringify(subscribeMessage));
+          console.log(`[WS-FRAME] ✅ Subscription sent`);
         }
-      }, 100); // 100ms delay to ensure connection is fully established
+      }, 100);
     };
 
-    this.socket.onmessage = (event) => {
+    this.frameSocket.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
-        console.log(`[WS-SERVICE] 📨 Received message:`, {
-          type: message.type,
-          frame: message.data?.frame_number,
-          vehicles: message.data?.total_vehicles
-        });
         
-        if (message.type === 'placeholder') {
-          console.log('[WS-SERVICE] Received placeholder frame');
-          this.frameSubject.next(message.data);
-        } else if (message.type === 'frame' || message.type === 'processed_frame') {
-          console.log(`[WS-SERVICE] Received frame ${message.data.frame_number}`);
+        if (message.type === 'subscription_ack') {
+          console.log(`[WS-FRAME] ✅ Subscription confirmed: ${message.channel}`);
+        } else if (message.type === 'frame') {
+          console.log(`[WS-FRAME] 📨 Received frame ${message.data.frame_number}`);
           this.frameSubject.next(message.data);
         } else {
-          console.warn(`[WS-SERVICE] Unknown message type:`, message.type);
+          console.warn(`[WS-FRAME] Unknown message type:`, message.type);
         }
       } catch (error) {
-        console.error('[WS-SERVICE] ❌ Error parsing message:', error);
+        console.error('[WS-FRAME] ❌ Error parsing message:', error);
       }
     };
 
-    this.socket.onerror = (error) => {
-      console.error('[WS-SERVICE] ❌ WebSocket error:', error);
+    this.frameSocket.onerror = (error) => {
+      console.error('[WS-FRAME] ❌ Error:', error);
     };
 
-    this.socket.onclose = (event) => {
-      console.log(`[WS-SERVICE] 🔌 WebSocket disconnected (code: ${event.code}, reason: ${event.reason})`);
-      this.pendingSubscription = null;
+    this.frameSocket.onclose = (event) => {
+      console.log(`[WS-FRAME] 🔌 Disconnected (code: ${event.code})`);
     };
-
-    return this.frameSubject.asObservable();
   }
-
-  private unsubscribeFromChannel(channelName: string) {
-    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-      const unsubscribeMessage = {
-        action: 'unsubscribe',
-        channel: channelName
-      };
+  
+  private connectAnalyticsChannel(videoId: number) {
+    const wsUrl = `ws://localhost:8686/ws/client/stream`;
+    const channelName = `analytics_metrics_${videoId}`;
+    
+    console.log(`[WS-ANALYTICS] Connecting to: ${wsUrl}`);
+    
+    this.analyticsSocket = new WebSocket(wsUrl);
+    
+    this.analyticsSocket.onopen = () => {
+      console.log(`[WS-ANALYTICS] ✓ Connected`);
       
-      console.log(`[WS-SERVICE] 📤 Unsubscribing from:`, channelName);
-      
+      setTimeout(() => {
+        if (this.analyticsSocket && this.analyticsSocket.readyState === WebSocket.OPEN) {
+          const subscribeMessage = {
+            action: 'subscribe',
+            channel: channelName
+          };
+          
+          console.log(`[WS-ANALYTICS] 📤 Subscribing to: ${channelName}`);
+          this.analyticsSocket.send(JSON.stringify(subscribeMessage));
+          console.log(`[WS-ANALYTICS] ✅ Subscription sent`);
+        }
+      }, 100);
+    };
+    
+    this.analyticsSocket.onmessage = (event) => {
       try {
-        this.socket.send(JSON.stringify(unsubscribeMessage));
-        console.log(`[WS-SERVICE] ✅ Unsubscribe message sent`);
+        const message = JSON.parse(event.data);
+        
+        if (message.type === 'subscription_ack') {
+          console.log(`[WS-ANALYTICS] ✅ Subscription confirmed: ${message.channel}`);
+        } else if (message.type === 'analytics') {
+          const speedingCount = message.data.speeding_vehicles?.length || 0;
+          console.log(`[WS-ANALYTICS] 📨 Received analytics (frame ${message.data.frame_number}, speeding: ${speedingCount})`);
+          this.analyticsSubject.next(message.data);
+        } else {
+          console.warn(`[WS-ANALYTICS] Unknown message type:`, message.type);
+        }
       } catch (error) {
-        console.error(`[WS-SERVICE] ❌ Failed to unsubscribe:`, error);
+        console.error('[WS-ANALYTICS] ❌ Error parsing message:', error);
       }
-    }
+    };
+    
+    this.analyticsSocket.onerror = (error) => {
+      console.error('[WS-ANALYTICS] ❌ Error:', error);
+    };
+
+    this.analyticsSocket.onclose = (event) => {
+      console.log(`[WS-ANALYTICS] 🔌 Disconnected (code: ${event.code})`);
+    };
   }
 
   disconnect() {
-    if (this.socket) {
-      if (this.currentChannel) {
-        this.unsubscribeFromChannel(this.currentChannel);
-      }
-      
-      console.log('[WS-SERVICE] 🔌 Closing WebSocket connection');
-      this.socket.close(1000, 'Client disconnect');
-      this.socket = null;
-      this.currentChannel = null;
-      this.pendingSubscription = null;
+    console.log('[WS-SERVICE] 🔌 Disconnecting all channels');
+    
+    if (this.frameSocket) {
+      this.frameSocket.close(1000, 'Client disconnect');
+      this.frameSocket = null;
     }
+    
+    if (this.analyticsSocket) {
+      this.analyticsSocket.close(1000, 'Client disconnect');
+      this.analyticsSocket = null;
+    }
+    
+    this.currentVideoId = null;
   }
 }

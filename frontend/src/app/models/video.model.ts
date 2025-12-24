@@ -27,8 +27,23 @@ export interface VehicleData {
   bbox: VehicleBBox;
   speed: number;
   speed_unit: string;
-  class_id: number;      // ADD THIS
-  confidence: number;    // ADD THIS
+  class_id: number;
+  confidence: number;
+  detectedAt?: Date;  // For speeding vehicles list
+}
+
+export interface FrameStats {
+  total_vehicles: number;       // Cumulative total
+  speeding_count: number;       // Current >60km/h
+  current_in_roi: number;       // Active in ROI
+}
+
+export interface AnalyticsData {
+  video_id: number;
+  frame_number: number;
+  timestamp: number;
+  stats: FrameStats;
+  speeding_vehicles: VehicleData[];
 }
 
 export interface OriginalResolution {
@@ -41,12 +56,9 @@ export interface ProcessedFrameData {
   frame_number: number;
   timestamp: number;
   processed_frame: string;
-  original_resolution: OriginalResolution;
-  vehicles: VehicleData[];
   roi_polygon: number[][] | null;
-  total_vehicles: number;
-  error?: string;
   end_of_stream?: boolean;
+  error?: string;
   message?: string;
 }
 

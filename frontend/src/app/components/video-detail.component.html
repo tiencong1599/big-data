@@ -55,7 +55,7 @@
         {{ error }}
       </div>
 
-      <!-- Video Display -->
+      <!-- Video Display with Canvas Overlay -->
       <div class="video-display">
         <div *ngIf="!currentFrame && !isStreaming" class="placeholder">
           <div class="placeholder-icon">🎬</div>
@@ -67,46 +67,71 @@
           <p>Waiting for frames...</p>
         </div>
 
-        <img 
-          *ngIf="currentFrame" 
-          [src]="currentFrame" 
-          alt="Video Frame"
-          class="video-frame">
+        <div *ngIf="currentFrame" class="video-container">
+          <img 
+            #videoImage
+            [src]="currentFrame" 
+            alt="Video Frame"
+            class="video-frame"
+            (load)="drawROI()">
+          <canvas 
+            #canvasOverlay
+            class="canvas-overlay">
+          </canvas>
+        </div>
       </div>
     </div>
 
-    <!-- Stats Section -->
+    <!-- Analytics Section (from analytics channel) -->
     <div class="stats-section">
-      <h3>Stats</h3>
+      <h3>Analytics</h3>
       <div class="stats-grid">
         <div class="stat-card">
-          <div class="stat-label">Frames</div>
-          <div class="stat-value">1234</div>
+          <div class="stat-label">Total Vehicles</div>
+          <div class="stat-value">{{ stats.total_vehicles }}</div>
+        </div>
+        <div class="stat-card highlight">
+          <div class="stat-label">Speeding Now</div>
+          <div class="stat-value speeding">{{ stats.speeding_count }}</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">FPS</div>
-          <div class="stat-value">30</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Duration</div>
-          <div class="stat-value">12:34:56</div>
+          <div class="stat-label">Active in ROI</div>
+          <div class="stat-value">{{ stats.current_in_roi }}</div>
         </div>
       </div>
     </div>
 
-    <!-- Vehicles Section -->
+    <!-- Speeding Vehicles Section (append-only) -->
     <div class="vehicles-section">
-      <h3>Vehicles</h3>
-      <div class="vehicle-list">
-        <div class="vehicle-card">
+      <div class="section-header">
+        <h3>Speeding Vehicles (&gt;60 km/h)</h3>
+        <button class="btn-secondary" (click)="clearSpeedingList()">Clear List</button>
+      </div>
+      
+      <div class="vehicle-list" *ngIf="speedingVehicles.length > 0">
+        <div class="vehicle-card" 
+             *ngFor="let vehicle of speedingVehicles; trackBy: trackByTrackId"
+             [style.border-left-color]="getVehicleColor(vehicle.track_id)">
           <div class="vehicle-header">
-            <div class="vehicle-id">ABC123</div>
-            <div class="vehicle-speed">60 km/h</div>
+            <div class="vehicle-id">ID: {{ vehicle.track_id }}</div>
+            <div class="vehicle-speed danger">{{ vehicle.speed.toFixed(1) }} km/h</div>
           </div>
-          <div class="vehicle-bbox">
-            <div class="badge">High Speed</div>
+          <div class="vehicle-info">
+            <span class="badge class-{{ vehicle.class_id }}">
+              {{ vehicle.class_id === 2 ? 'Car' : vehicle.class_id === 7 ? 'Truck' : vehicle.class_id === 3 ? 'Motorcycle' : 'Bus' }}
+            </span>
+            <span class="confidence">{{ (vehicle.confidence * 100).toFixed(0) }}%</span>
+            <span class="timestamp" *ngIf="vehicle.detectedAt">{{ vehicle.detectedAt ? formatTime(vehicle.detectedAt) : 'N/A' }}</span>
           </div>
         </div>
+      </div>
+      
+      <div class="empty-state" *ngIf="speedingVehicles.length === 0 && isStreaming">
+        <p>No speeding vehicles detected yet</p>
+      </div>
+      
+      <div class="empty-state" *ngIf="!isStreaming">
+        <p>Start streaming to monitor speeding vehicles</p>
       </div>
     </div>
   </div>

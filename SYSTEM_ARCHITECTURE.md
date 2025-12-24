@@ -621,7 +621,6 @@ Analytics Subscription:
   ws.onmessage (analytics channel)
   → Update stats display
   → Append NEW speeding vehicles to list
-  → Auto-scroll to bottom
   → NO re-render
 ```
 

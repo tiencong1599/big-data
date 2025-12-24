@@ -48,56 +48,79 @@ class ResultConsumer:
         
         # Convert HTTP URL to WebSocket URL
         ws_url = BACKEND_URL.replace('http://', 'ws://').replace('https://', 'wss://')
-        self.backend_ws_url = f"{ws_url}/ws/backend_processed_frame"
-        self.ws = None
+        self.backend_ws_frame_url = f"{ws_url}/ws/backend/processed"
+        self.backend_ws_analytics_url = f"{ws_url}/ws/backend/analytics"
+        self.ws_frame = None
+        self.ws_analytics = None
         self.reconnect_delay = 5
         self.last_id = '>'  # Read only new messages
         
-        # Subscription cache key prefix (matches backend)
+        # Subscription cache key prefixes (matches backend)
         self.subscription_cache_prefix = 'websocket:subscription:video:'
+        self.analytics_cache_prefix = 'websocket:analytics:video:'
     
     def connect_to_backend(self):
-        """Establish WebSocket connection to backend unified channel"""
+        """Establish dual WebSocket connections to backend (frames + analytics)"""
         max_retries = 5
         retry_count = 0
         
+        # Connect to frame channel
         while retry_count < max_retries:
             try:
                 retry_count += 1
-                print(f"Attempting to connect to {self.backend_ws_url}...")
-                self.ws = websocket.create_connection(
-                    self.backend_ws_url,
+                print(f"[FRAME-WS] Attempting to connect to {self.backend_ws_frame_url}...")
+                self.ws_frame = websocket.create_connection(
+                    self.backend_ws_frame_url,
                     timeout=10
                 )
-                print("✓ Connected to backend WebSocket channel\n")
-                return True
-                
+                print("[FRAME-WS] ✓ Connected to backend frame channel")
+                break
             except Exception as e:
-                print(f"✗ Connection failed (attempt {retry_count}/{max_retries}): {e}")
+                print(f"[FRAME-WS] ✗ Connection failed (attempt {retry_count}/{max_retries}): {e}")
                 if retry_count < max_retries:
-                    print(f"  Retrying in {self.reconnect_delay} seconds...")
+                    time.sleep(self.reconnect_delay)
+        
+        if not self.ws_frame:
+            return False
+        
+        # Connect to analytics channel
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                retry_count += 1
+                print(f"[ANALYTICS-WS] Attempting to connect to {self.backend_ws_analytics_url}...")
+                self.ws_analytics = websocket.create_connection(
+                    self.backend_ws_analytics_url,
+                    timeout=10
+                )
+                print("[ANALYTICS-WS] ✓ Connected to backend analytics channel\n")
+                return True
+            except Exception as e:
+                print(f"[ANALYTICS-WS] ✗ Connection failed (attempt {retry_count}/{max_retries}): {e}")
+                if retry_count < max_retries:
                     time.sleep(self.reconnect_delay)
         
         return False
     
-    def has_subscribers(self, video_id):
-        """Check if video has any subscribers by checking Redis cache"""
+    def has_frame_subscribers(self, video_id):
+        """Check if video has any frame channel subscribers"""
         try:
             cache_key = f"{self.subscription_cache_prefix}{video_id}"
-            # Check if key exists in Redis
             result = self.redis_client.get(cache_key)
-            
-            if result is None:
-                # No cache entry means no subscribers
-                return False
-            
-            # Cache exists and value is 'true'
-            return result == 'true'
-            
+            return result == 'true' if result is not None else False
         except Exception as e:
-            # On error, default to True (fail-safe: send frames)
-            print(f"[SUBSCRIPTION-CHECK] Error checking Redis cache for video {video_id}: {e}")
-            return True
+            print(f"[SUBSCRIPTION-CHECK] Error checking frame cache for video {video_id}: {e}")
+            return True  # Fail-safe
+    
+    def has_analytics_subscribers(self, video_id):
+        """Check if video has any analytics channel subscribers"""
+        try:
+            cache_key = f"{self.analytics_cache_prefix}{video_id}"
+            result = self.redis_client.get(cache_key)
+            return result == 'true' if result is not None else False
+        except Exception as e:
+            print(f"[SUBSCRIPTION-CHECK] Error checking analytics cache for video {video_id}: {e}")
+            return True  # Fail-safe
     
     def start_consuming(self):
         """Consume processed frames from Redis Streams and send to backend via WebSocket"""
@@ -135,38 +158,60 @@ class ResultConsumer:
                             frame_number = message_data.get('frame_number', 'unknown')
                             video_id_int = int(video_id) if video_id else None
                             
-                            # OPTIMIZATION: Check Redis cache for subscribers before forwarding
-                            if video_id_int and not self.has_subscribers(video_id_int):
-                                # Acknowledge message without forwarding
+                            # Check subscribers for both channels
+                            has_frame_subs = video_id_int and self.has_frame_subscribers(video_id_int)
+                            has_analytics_subs = video_id_int and self.has_analytics_subscribers(video_id_int)
+                            
+                            # Skip if no subscribers at all
+                            if not has_frame_subs and not has_analytics_subs:
                                 self.redis_client.xack(REDIS_RESULT_STREAM, 'redis-consumer-group', message_id)
-                                # Skip forwarding silently (no active subscribers)
                                 continue
                             
-                            # Reconstruct full frame data
-                            frame_data = {
-                                'video_id': video_id_int,
-                                'frame_number': int(frame_number) if frame_number.isdigit() else frame_number,
-                                'timestamp': int(message_data.get('timestamp', 0)),
-                                'processed_frame': message_data.get('processed_frame', ''),
-                                'vehicles': json.loads(message_data.get('vehicles', '[]')),
-                                'roi_polygon': json.loads(message_data.get('roi_polygon', '[]')),
-                                'total_vehicles': int(message_data.get('total_vehicles', 0)),
-                                'has_homography': message_data.get('has_homography', 'false') == 'true',
-                                'has_camera_matrix': message_data.get('has_camera_matrix', 'false') == 'true',
-                                'end_of_stream': message_data.get('end_of_stream', 'false') == 'true',
-                                'error': message_data.get('error')
-                            }
+                            # Parse common data
+                            frame_number_int = int(frame_number) if frame_number.isdigit() else frame_number
+                            timestamp = int(message_data.get('timestamp', 0))
+                            vehicles = json.loads(message_data.get('vehicles', '[]'))
+                            roi_polygon = json.loads(message_data.get('roi_polygon', '[]'))
+                            stats = json.loads(message_data.get('stats', '{}'))
+                            end_of_stream = message_data.get('end_of_stream', 'false') == 'true'
                             
                             frame_count += 1
                             
-                            # Send IMMEDIATELY to unified backend channel
-                            self.ws.send(json.dumps({
-                                'type': 'processed_frame',
-                                'data': frame_data
-                            }))
+                            # Route to FRAME channel (frame + ROI only, no vehicles/stats)
+                            if has_frame_subs:
+                                frame_data = {
+                                    'video_id': video_id_int,
+                                    'frame_number': frame_number_int,
+                                    'timestamp': timestamp,
+                                    'processed_frame': message_data.get('processed_frame', ''),
+                                    'roi_polygon': roi_polygon,
+                                    'end_of_stream': end_of_stream
+                                }
+                                
+                                self.ws_frame.send(json.dumps({
+                                    'type': 'processed_frame',
+                                    'data': frame_data
+                                }))
+                                print(f"[FRAME] ✓ Frame {frame_number} → frame channel")
                             
-                            # Log every frame for real-time tracking
-                            print(f"✓ Frame {frame_number} forwarded (video {video_id})")
+                            # Route to ANALYTICS channel (stats + speeding vehicles only)
+                            if has_analytics_subs:
+                                # Filter speeding vehicles (>60 km/h)
+                                speeding_vehicles = [v for v in vehicles if v.get('speed', 0) > 60]
+                                
+                                analytics_data = {
+                                    'video_id': video_id_int,
+                                    'frame_number': frame_number_int,
+                                    'timestamp': timestamp,
+                                    'stats': stats,
+                                    'speeding_vehicles': speeding_vehicles
+                                }
+                                
+                                self.ws_analytics.send(json.dumps({
+                                    'type': 'analytics_update',
+                                    'data': analytics_data
+                                }))
+                                print(f"[ANALYTICS] ✓ Frame {frame_number} → analytics channel (speeding: {len(speeding_vehicles)})")
                             
                             # Acknowledge message
                             self.redis_client.xack(REDIS_RESULT_STREAM, 'redis-consumer-group', message_id)
@@ -175,7 +220,7 @@ class ResultConsumer:
                             
                         except (websocket.WebSocketConnectionClosedException, BrokenPipeError) as e:
                             print(f"\n✗ WebSocket connection lost: {e}")
-                            print("Reconnecting...")
+                            print("Reconnecting both channels...")
                             
                             if self.connect_to_backend():
                                 print("✓ Reconnected successfully\n")
@@ -202,8 +247,10 @@ class ResultConsumer:
                 print(f"✗ Consumer error: {e}")
                 time.sleep(2)
         
-        if self.ws:
-            self.ws.close()
+        if self.ws_frame:
+            self.ws_frame.close()
+        if self.ws_analytics:
+            self.ws_analytics.close()
         self.redis_client.close()
         print(f"\nTotal frames forwarded: {frame_count}")
 

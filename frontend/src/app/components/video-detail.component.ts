@@ -1,5 +1,5 @@
 import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, ViewChild, ElementRef, AfterViewInit } from '@angular/core';
-import { Video, ProcessedFrameData, VehicleData } from '../models/video.model';
+import { Video, ProcessedFrameData, VehicleData, AnalyticsData, FrameStats } from '../models/video.model';
 import { WebsocketService } from '../services/websocket.service';
 import { VideoService } from '../services/video.service';
 import { Subscription } from 'rxjs';
@@ -19,13 +19,17 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
   isStreaming = false;
   currentFrame: string | null = null;
   frameNumber = 0;
-  vehicles: VehicleData[] = [];
-  totalVehicles = 0;
   roiPolygon: number[][] | null = null;
   error: string | null = null;
   
+  // Analytics data (from analytics channel)
+  stats: FrameStats = { total_vehicles: 0, speeding_count: 0, current_in_roi: 0 };
+  speedingVehicles: VehicleData[] = [];
+  private displayedSpeedingIds = new Set<number>();
+  
   private canvasContext: CanvasRenderingContext2D | null = null;
   private frameSubscription?: Subscription;
+  private analyticsSubscription?: Subscription;
   
   // WATCHDOG MECHANISM (3-second timeout)
   private watchdogTimer: any = null;
@@ -53,44 +57,90 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
   }
   
   subscribeToWebSocket() {
-    const channelName = `processed_frame_${this.video.id}`;
-    console.log(`[VIDEO-DETAIL] Subscribing to channel: ${channelName}`);
+    console.log(`[VIDEO-DETAIL] Subscribing to video ${this.video.id} (dual channels)`);
     
-    this.frameSubscription = this.wsService.subscribeToChannel(channelName, this.video.id).subscribe(
+    const { frames, analytics } = this.wsService.subscribeToVideo(this.video.id);
+    
+    // Frame subscription (canvas updates only)
+    this.frameSubscription = frames.subscribe(
       (frameData: ProcessedFrameData) => {
         this.resetWatchdog();
         
-        if (frameData.message) {
-          this.currentFrame = `data:image/jpeg;base64,${frameData.processed_frame}`;
-        } else {
-          this.currentFrame = `data:image/jpeg;base64,${frameData.processed_frame}`;
-          this.frameNumber = frameData.frame_number;
-          this.vehicles = frameData.vehicles || [];
-          this.totalVehicles = frameData.total_vehicles || 0;
-          this.roiPolygon = frameData.roi_polygon;
-          
-          setTimeout(() => this.drawBoundingBoxes(), 10);
-          
-          if (frameData.end_of_stream) {
-            this.isStreaming = false;
-            this.stopWatchdog();
-          }
+        this.currentFrame = `data:image/jpeg;base64,${frameData.processed_frame}`;
+        this.frameNumber = frameData.frame_number;
+        this.roiPolygon = frameData.roi_polygon;
+        
+        // Draw ROI only (no bounding boxes)
+        setTimeout(() => this.drawROI(), 10);
+        
+        if (frameData.end_of_stream) {
+          this.isStreaming = false;
+          this.stopWatchdog();
         }
       },
       (error) => {
-        console.error('[VIDEO-DETAIL] WebSocket error:', error);
+        console.error('[VIDEO-DETAIL] Frame channel error:', error);
         this.handleWatchdogTimeout();
+      }
+    );
+    
+    // Analytics subscription (stats + speeding vehicles)
+    this.analyticsSubscription = analytics.subscribe(
+      (analyticsData: AnalyticsData) => {
+        // Update stats
+        this.stats = analyticsData.stats;
+        
+        // Append NEW speeding vehicles only
+        this.appendNewSpeedingVehicles(analyticsData.speeding_vehicles);
+      },
+      (error) => {
+        console.error('[VIDEO-DETAIL] Analytics channel error:', error);
       }
     );
   }
   
   unsubscribeFromWebSocket() {
     if (this.frameSubscription) {
-      console.log(`[VIDEO-DETAIL] Unsubscribing from video ${this.video.id}`);
+      console.log(`[VIDEO-DETAIL] Unsubscribing from frame channel`);
       this.frameSubscription.unsubscribe();
       this.frameSubscription = undefined;
     }
+    
+    if (this.analyticsSubscription) {
+      console.log(`[VIDEO-DETAIL] Unsubscribing from analytics channel`);
+      this.analyticsSubscription.unsubscribe();
+      this.analyticsSubscription = undefined;
+    }
+    
     this.wsService.disconnect();
+  }
+  
+  appendNewSpeedingVehicles(newVehicles: VehicleData[]) {
+    // Only add vehicles we haven't seen before
+    for (const vehicle of newVehicles) {
+      if (!this.displayedSpeedingIds.has(vehicle.track_id)) {
+        vehicle.detectedAt = new Date();
+        this.speedingVehicles.push(vehicle);
+        this.displayedSpeedingIds.add(vehicle.track_id);
+        
+        // Auto-scroll to bottom
+        setTimeout(() => {
+          const list = document.querySelector('.vehicle-list');
+          if (list) {
+            list.scrollTop = list.scrollHeight;
+          }
+        }, 50);
+      }
+    }
+  }
+  
+  clearSpeedingList() {
+    this.speedingVehicles = [];
+    this.displayedSpeedingIds.clear();
+  }
+  
+  trackByTrackId(index: number, vehicle: VehicleData): number {
+    return vehicle.track_id;
   }
   
   startWatchdog() {
@@ -119,8 +169,7 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
     console.log('[VIDEO-DETAIL] 🔄 Reverting to default thumbnail');
     
     this.currentFrame = this.defaultThumbnail;
-    this.vehicles = [];
-    this.totalVehicles = 0;
+    this.stats = { total_vehicles: 0, speeding_count: 0, current_in_roi: 0 };
     
     this.isStreaming = false;
     
@@ -165,18 +214,19 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
     });
   }
   
-  drawBoundingBoxes() {
+  drawROI() {
     if (!this.canvasContext || !this.videoImage || !this.canvasOverlay) return;
     
     const canvas = this.canvasOverlay.nativeElement;
     const img = this.videoImage.nativeElement;
     
-    canvas.width = img.width;
-    canvas.height = img.height;
+    // Match canvas size to image
+    canvas.width = img.naturalWidth || img.width;
+    canvas.height = img.naturalHeight || img.height;
     
     this.canvasContext.clearRect(0, 0, canvas.width, canvas.height);
     
-    // Draw ROI polygon
+    // Draw ROI polygon only
     if (this.roiPolygon && this.roiPolygon.length > 0) {
       this.canvasContext.strokeStyle = '#ffff00';
       this.canvasContext.lineWidth = 2;
@@ -190,37 +240,10 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
       this.canvasContext.stroke();
       this.canvasContext.setLineDash([]);
     }
-    
-    // Draw vehicle bounding boxes
-    this.vehicles.forEach(vehicle => {
-      const { bbox, track_id, speed, class_id, confidence } = vehicle;
-      const { x1, y1, x2, y2 } = bbox;
-      
-      const colors: { [key: number]: string } = {
-        2: '#00ff00', // car
-        7: '#ff0000', // truck
-        3: '#0000ff', // motorcycle
-        5: '#ffff00'  // bus
-      };
-      const color = colors[class_id] || '#ffffff';
-      
-      // FIX: Add null checks
-      if (!this.canvasContext) return;
-      
-      this.canvasContext.strokeStyle = color;
-      this.canvasContext.lineWidth = 3;
-      this.canvasContext.strokeRect(x1, y1, x2 - x1, y2 - y1);
-      
-      const label = `ID:${track_id} | ${speed.toFixed(1)} km/h | ${(confidence * 100).toFixed(0)}%`;
-      this.canvasContext.font = 'bold 14px Arial';
-      const textWidth = this.canvasContext.measureText(label).width;
-      
-      this.canvasContext.fillStyle = color;
-      this.canvasContext.fillRect(x1, y1 - 22, textWidth + 10, 22);
-      
-      this.canvasContext.fillStyle = '#000';
-      this.canvasContext.fillText(label, x1 + 5, y1 - 6);
-    });
+  }
+  
+  formatTime(date: Date): string {
+    return date.toLocaleTimeString();
   }
 
   closePanel() {

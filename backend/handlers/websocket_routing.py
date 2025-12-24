@@ -34,6 +34,7 @@ redis_cache_client = redis.Redis(
 )
 
 SUBSCRIPTION_CACHE_PREFIX = 'websocket:subscription:video:'
+ANALYTICS_CACHE_PREFIX = 'websocket:analytics:video:'
 SUBSCRIPTION_CACHE_TTL = 3600  # 1 hour TTL for safety
 
 
@@ -118,6 +119,77 @@ class BackendProcessedFrameHandler(tornado.websocket.WebSocketHandler):
         print("[BACKEND-CHANNEL] Redis consumer disconnected")
 
 
+class BackendAnalyticsHandler(tornado.websocket.WebSocketHandler):
+    """
+    WebSocket endpoint for analytics data (stats + speeding vehicles)
+    Receives analytics from Redis consumer and routes to analytics channels
+    """
+    
+    def check_origin(self, origin):
+        return True
+    
+    def open(self):
+        print("[BACKEND-ANALYTICS-CHANNEL] ✓ Redis consumer connected")
+    
+    def on_message(self, message):
+        """
+        Receives analytics data from Redis consumer
+        Routes to appropriate analytics_metrics_<video_id> channels
+        """
+        try:
+            data = json.loads(message)
+            
+            if data.get('type') == 'analytics_update':
+                analytics_data = data['data']
+                video_id = analytics_data.get('video_id')
+                frame_number = analytics_data.get('frame_number')
+                
+                if not video_id:
+                    print(f"[BACKEND-ANALYTICS-CHANNEL] ❌ Error: No video_id in analytics data")
+                    return
+                
+                # Determine target analytics channel
+                channel_name = f"analytics_metrics_{video_id}"
+                
+                # Check if anyone is subscribed
+                if channel_name not in client_subscriptions or len(client_subscriptions[channel_name]) == 0:
+                    return
+                
+                # Get subscribed clients
+                clients = client_subscriptions[channel_name]
+                speeding_count = len(analytics_data.get('speeding_vehicles', []))
+                print(f"[BACKEND-ANALYTICS-CHANNEL] ✓ Broadcasting analytics (frame {frame_number}, speeding: {speeding_count}) to {len(clients)} client(s)")
+                
+                # Broadcast to all subscribed clients
+                dead_clients = set()
+                for client_ws in clients:
+                    try:
+                        message_to_send = {
+                            'type': 'analytics',
+                            'data': analytics_data
+                        }
+                        message_json = json.dumps(message_to_send)
+                        client_ws.write_message(message_json)
+                    except Exception as e:
+                        print(f"[BACKEND-ANALYTICS-CHANNEL] ❌ Error sending to client: {e}")
+                        dead_clients.add(client_ws)
+                
+                # Remove dead connections
+                for dead_client in dead_clients:
+                    clients.discard(dead_client)
+            
+            elif data.get('type') == 'heartbeat':
+                self.write_message(json.dumps({'type': 'heartbeat_ack'}))
+        
+        except Exception as e:
+            print(f"[BACKEND-ANALYTICS-CHANNEL] ❌ Error processing message: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def on_close(self):
+        print("[BACKEND-ANALYTICS-CHANNEL] Redis consumer disconnected")
+
+
 # ============================================================================
 # CLIENT CHANNEL HANDLER (Frontend → Backend)
 # ============================================================================
@@ -169,11 +241,17 @@ class ClientFrameHandler(tornado.websocket.WebSocketHandler):
                 
                 # Write to Redis cache: video_id -> "true"
                 try:
-                    # Extract video_id from channel name (e.g., "processed_frame_1" -> "1")
-                    video_id = channel.replace('processed_frame_', '')
-                    cache_key = f"{SUBSCRIPTION_CACHE_PREFIX}{video_id}"
-                    redis_cache_client.setex(cache_key, SUBSCRIPTION_CACHE_TTL, 'true')
-                    print(f"[CLIENT-CHANNEL] 💾 Redis cache set: {cache_key} = true")
+                    # Determine if this is a frame or analytics channel
+                    if channel.startswith('processed_frame_'):
+                        video_id = channel.replace('processed_frame_', '')
+                        cache_key = f"{SUBSCRIPTION_CACHE_PREFIX}{video_id}"
+                        redis_cache_client.setex(cache_key, SUBSCRIPTION_CACHE_TTL, 'true')
+                        print(f"[CLIENT-CHANNEL] 💾 Frame cache set: {cache_key} = true")
+                    elif channel.startswith('analytics_metrics_'):
+                        video_id = channel.replace('analytics_metrics_', '')
+                        cache_key = f"{ANALYTICS_CACHE_PREFIX}{video_id}"
+                        redis_cache_client.setex(cache_key, SUBSCRIPTION_CACHE_TTL, 'true')
+                        print(f"[CLIENT-CHANNEL] 💾 Analytics cache set: {cache_key} = true")
                 except Exception as e:
                     print(f"[CLIENT-CHANNEL] ⚠️ Failed to set Redis cache: {e}")
                 
@@ -193,10 +271,17 @@ class ClientFrameHandler(tornado.websocket.WebSocketHandler):
                         del client_subscriptions[channel]
                         print(f"[CLIENT-CHANNEL] 🗑️ Channel '{channel}' removed (no subscribers)")
                         
-                        # Clear Redis cache when no subscribers left
+                        # Clear appropriate Redis cache when no subscribers left
                         try:
-                            video_id = channel.replace('processed_frame_', '')
-                            cache_key = f"{SUBSCRIPTION_CACHE_PREFIX}{video_id}"
+                            if channel.startswith('processed_frame_'):
+                                video_id = channel.replace('processed_frame_', '')
+                                cache_key = f"{SUBSCRIPTION_CACHE_PREFIX}{video_id}"
+                            elif channel.startswith('analytics_metrics_'):
+                                video_id = channel.replace('analytics_metrics_', '')
+                                cache_key = f"{ANALYTICS_CACHE_PREFIX}{video_id}"
+                            else:
+                                return
+                            
                             redis_cache_client.delete(cache_key)
                             print(f"[CLIENT-CHANNEL] 🗑️ Redis cache cleared: {cache_key}")
                         except Exception as e:
@@ -220,10 +305,17 @@ class ClientFrameHandler(tornado.websocket.WebSocketHandler):
                 if len(client_subscriptions[channel]) == 0:
                     del client_subscriptions[channel]
                     
-                    # Clear Redis cache when last client disconnects
+                    # Clear appropriate Redis cache when last client disconnects
                     try:
-                        video_id = channel.replace('processed_frame_', '')
-                        cache_key = f"{SUBSCRIPTION_CACHE_PREFIX}{video_id}"
+                        if channel.startswith('processed_frame_'):
+                            video_id = channel.replace('processed_frame_', '')
+                            cache_key = f"{SUBSCRIPTION_CACHE_PREFIX}{video_id}"
+                        elif channel.startswith('analytics_metrics_'):
+                            video_id = channel.replace('analytics_metrics_', '')
+                            cache_key = f"{ANALYTICS_CACHE_PREFIX}{video_id}"
+                        else:
+                            continue
+                        
                         redis_cache_client.delete(cache_key)
                         print(f"[CLIENT-CHANNEL] 🗑️ Redis cache cleared on disconnect: {cache_key}")
                     except Exception as e:
@@ -255,9 +347,17 @@ class WebSocketStatusHandler(tornado.web.RequestHandler):
         }
         
         for channel_name, clients in client_subscriptions.items():
+            # Extract video_id from channel name (processed_frame_X or analytics_metrics_X)
+            video_id = None
+            if 'processed_frame_' in channel_name:
+                video_id = int(channel_name.replace('processed_frame_', ''))
+            elif 'analytics_metrics_' in channel_name:
+                video_id = int(channel_name.replace('analytics_metrics_', ''))
+            
             status['channels'][channel_name] = {
                 'subscriber_count': len(clients),
-                'video_id': int(channel_name.replace('processed_frame_', ''))
+                'video_id': video_id,
+                'type': 'frame' if 'processed_frame_' in channel_name else 'analytics'
             }
             status['total_clients'] += len(clients)
         
@@ -273,12 +373,13 @@ def get_websocket_handlers():
     Returns list of WebSocket handlers for registration in main app
     """
     return [
-        # Backend unified channel (for Kafka consumer)
-        (r"/ws/backend_processed_frame", BackendProcessedFrameHandler),
+        # Backend channels (for Redis consumer)
+        (r"/ws/backend/processed", BackendProcessedFrameHandler),
+        (r"/ws/backend/analytics", BackendAnalyticsHandler),
         
         # Client channels (for frontend)
         (r"/ws/client/stream", ClientFrameHandler),
-        
+
         # Status endpoint
         (r"/api/websocket/status", WebSocketStatusHandler),
     ]
