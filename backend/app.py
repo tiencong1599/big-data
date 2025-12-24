@@ -9,6 +9,14 @@ from handlers.websocket_routing import get_websocket_handlers
 from handlers.video_handler import VideoUploadHandler, VideoListHandler, VideoDetailHandler, VideoHandler
 from handlers.stream_handler import StreamHandler
 from handlers.producer_handler import ProducerHandler
+from handlers.analytics_handler import (
+    AnalyticsAggregateHandler,
+    AnalyticsSummaryHandler,
+    AnalyticsSnapshotsHandler,
+    SpeedingVehiclesHandler,
+    AnalyticsSessionsHandler,
+    AnalyticsExportHandler
+)
 from models.video import init_db
 from config.settings import SERVER_PORT, ALLOWED_ORIGINS
 
@@ -35,6 +43,14 @@ class Application(tornado.web.Application):
             # Streaming
             (r"/api/stream/start", StreamHandler),
             (r"/api/producer/stream", ProducerHandler),
+            
+            # Analytics APIs (Phase 3)
+            (r"/api/analytics/aggregate", AnalyticsAggregateHandler),
+            (r"/api/analytics/summary", AnalyticsSummaryHandler),
+            (r"/api/analytics/snapshots", AnalyticsSnapshotsHandler),
+            (r"/api/analytics/speeding", SpeedingVehiclesHandler),
+            (r"/api/analytics/sessions", AnalyticsSessionsHandler),
+            (r"/api/analytics/export", AnalyticsExportHandler),
             
             # WebSocket handlers (new routing system)
             *get_websocket_handlers(),

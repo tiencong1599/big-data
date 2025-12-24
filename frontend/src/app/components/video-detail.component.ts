@@ -1,5 +1,5 @@
 import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, ViewChild, ElementRef, AfterViewInit } from '@angular/core';
-import { Video, ProcessedFrameData, VehicleData, AnalyticsData, FrameStats } from '../models/video.model';
+import { Video, ProcessedFrameData, VehicleData, AnalyticsData, FrameStats, TimelineData, VehicleTypeData } from '../models/video.model';
 import { WebsocketService } from '../services/websocket.service';
 import { VideoService } from '../services/video.service';
 import { Subscription } from 'rxjs';
@@ -26,6 +26,12 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
   stats: FrameStats = { total_vehicles: 0, speeding_count: 0, current_in_roi: 0 };
   speedingVehicles: VehicleData[] = [];
   private displayedSpeedingIds = new Set<number>();
+  
+  // Charts data
+  isChartsExpanded = false;
+  timelineData?: TimelineData;
+  maxSpeed = 0;
+  vehicleTypeData?: VehicleTypeData;
   
   private canvasContext: CanvasRenderingContext2D | null = null;
   private frameSubscription?: Subscription;
@@ -90,6 +96,9 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
         // Update stats
         this.stats = analyticsData.stats;
         
+        // Update chart data
+        this.updateChartData(analyticsData);
+        
         // Append NEW speeding vehicles only
         this.appendNewSpeedingVehicles(analyticsData.speeding_vehicles);
       },
@@ -137,6 +146,49 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
   clearSpeedingList() {
     this.speedingVehicles = [];
     this.displayedSpeedingIds.clear();
+  }
+  
+  toggleChartsSection() {
+    this.isChartsExpanded = !this.isChartsExpanded;
+  }
+  
+  updateChartData(analyticsData: AnalyticsData) {
+    // Update timeline data (throttled in chart component)
+    this.timelineData = {
+      timestamp: new Date().toLocaleTimeString(),
+      totalVehicles: analyticsData.stats.total_vehicles,
+      speedingVehicles: analyticsData.stats.speeding_count
+    };
+    
+    // Update max speed (find highest speed from speeding vehicles)
+    if (analyticsData.speeding_vehicles && analyticsData.speeding_vehicles.length > 0) {
+      const speeds = analyticsData.speeding_vehicles.map(v => v.speed);
+      const currentMax = Math.max(...speeds);
+      this.maxSpeed = Math.max(this.maxSpeed, currentMax);
+    }
+    
+    // Update vehicle type distribution (accumulate counts)
+    if (analyticsData.speeding_vehicles && analyticsData.speeding_vehicles.length > 0) {
+      const typeCounts: VehicleTypeData = {};
+      
+      // Count current speeding vehicles by type
+      for (const vehicle of analyticsData.speeding_vehicles) {
+        const typeName = this.getVehicleTypeName(vehicle.class_id);
+        typeCounts[typeName] = (typeCounts[typeName] || 0) + 1;
+      }
+      
+      this.vehicleTypeData = typeCounts;
+    }
+  }
+  
+  getVehicleTypeName(classId: number): string {
+    switch (classId) {
+      case 2: return 'Car';
+      case 3: return 'Motorcycle';
+      case 5: return 'Bus';
+      case 7: return 'Truck';
+      default: return 'Other';
+    }
   }
   
   trackByTrackId(index: number, vehicle: VehicleData): number {

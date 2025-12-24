@@ -68,3 +68,14 @@ export interface FrameData {
   frame_data: string;
   timestamp: number;
 }
+
+// Chart data types
+export interface TimelineData {
+  timestamp: string;
+  totalVehicles: number;
+  speedingVehicles: number;
+}
+
+export interface VehicleTypeData {
+  [type: string]: number;
+}

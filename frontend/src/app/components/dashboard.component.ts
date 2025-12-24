@@ -13,6 +13,9 @@ export class DashboardComponent implements OnInit {
   loading = false;
   error: string | null = null;
   
+  // View toggle
+  currentView: 'videos' | 'analytics' = 'videos';
+  
   // Delete confirmation
   showDeleteConfirm = false;
   videoToDelete: Video | null = null;
@@ -97,5 +100,9 @@ export class DashboardComponent implements OnInit {
         this.videoToDelete = null;
       }
     });
+  }
+  
+  switchView(view: 'videos' | 'analytics') {
+    this.currentView = view;
   }
 }

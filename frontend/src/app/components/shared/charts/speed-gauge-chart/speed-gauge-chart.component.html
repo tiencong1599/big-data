@@ -1,0 +1,16 @@
+<div class="gauge-container">
+  <div class="chart-wrapper">
+    <canvas #chartCanvas></canvas>
+  </div>
+  <div class="gauge-text">
+    <div class="speed-value">{{ getCurrentSpeed() | number:'1.0-0' }}</div>
+    <div class="speed-unit">km/h</div>
+    <div class="speed-status" [ngClass]="{
+      'safe': getCurrentSpeed() < 60,
+      'warning': getCurrentSpeed() >= 60 && getCurrentSpeed() < 80,
+      'danger': getCurrentSpeed() >= 80
+    }">
+      {{ getSpeedStatus() }}
+    </div>
+  </div>
+</div>

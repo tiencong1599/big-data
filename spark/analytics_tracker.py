@@ -100,6 +100,13 @@ class VehicleAnalyticsTracker:
             ex=86400  # Expire after 24 hours
         )
     
+    def get_current_metrics(self):
+        """Get current analytics metrics for this frame"""
+        return {
+            'total_vehicles_entered': self.total_vehicles_entered,
+            'current_vehicles_in_roi': len(self.current_vehicles_in_roi)
+        }
+    
     def finalize_and_dump_to_db(self, db_session):
         """
         Called when video processing completes

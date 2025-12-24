@@ -3,19 +3,37 @@
     <div class="videos-section">
       <div class="header">
         <h1>Video Dashboard</h1>
-        <app-video-upload (videoUploaded)="onVideoUploaded()"></app-video-upload>
+        <div class="header-actions">
+          <div class="view-toggle">
+            <button 
+              class="toggle-btn" 
+              [class.active]="currentView === 'videos'"
+              (click)="switchView('videos')">
+              Videos
+            </button>
+            <button 
+              class="toggle-btn" 
+              [class.active]="currentView === 'analytics'"
+              (click)="switchView('analytics')">
+              Analytics
+            </button>
+          </div>
+          <app-video-upload (videoUploaded)="onVideoUploaded()"></app-video-upload>
+        </div>
       </div>
 
-      <div *ngIf="loading" class="loading">
-        <div class="spinner"></div>
-        <p>Loading videos...</p>
-      </div>
+      <!-- Videos View -->
+      <div *ngIf="currentView === 'videos'">
+        <div *ngIf="loading" class="loading">
+          <div class="spinner"></div>
+          <p>Loading videos...</p>
+        </div>
 
-      <div *ngIf="error" class="error-message">
-        {{ error }}
-      </div>
+        <div *ngIf="error" class="error-message">
+          {{ error }}
+        </div>
 
-      <div class="videos-grid" *ngIf="!loading && !error">
+        <div class="videos-grid" *ngIf="!loading && !error">
         <div 
           *ngFor="let video of videos" 
           class="video-card"
@@ -52,10 +70,16 @@
           <h3>No Videos Yet</h3>
           <p>Upload your first video to get started</p>
         </div>
+        </div>
+      </div>
+      
+      <!-- Analytics View -->
+      <div *ngIf="currentView === 'analytics'">
+        <app-analytics-dashboard></app-analytics-dashboard>
       </div>
     </div>
 
-    <div class="detail-panel" *ngIf="selectedVideo">
+    <div class="detail-panel" *ngIf="selectedVideo && currentView === 'videos'">
       <app-video-detail 
         [video]="selectedVideo"
         (close)="closeDetail()">

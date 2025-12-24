@@ -172,7 +172,19 @@ class ResultConsumer:
                             timestamp = int(message_data.get('timestamp', 0))
                             vehicles = json.loads(message_data.get('vehicles', '[]'))
                             roi_polygon = json.loads(message_data.get('roi_polygon', '[]'))
-                            stats = json.loads(message_data.get('stats', '{}'))
+                            
+                            # Build stats from individual fields (Spark doesn't send 'stats' as JSON)
+                            # Use cumulative_total_vehicles for total count (not just current frame)
+                            cumulative_total = int(message_data.get('cumulative_total_vehicles', 0))
+                            current_in_roi = int(message_data.get('current_in_roi', 0))
+                            speeding_vehicles_list = [v for v in vehicles if v.get('speed', 0) > 60]
+                            
+                            stats = {
+                                'total_vehicles': cumulative_total,  # Cumulative total vehicles entered ROI
+                                'speeding_count': len(speeding_vehicles_list),
+                                'current_in_roi': current_in_roi  # Currently tracked in ROI
+                            }
+                            
                             end_of_stream = message_data.get('end_of_stream', 'false') == 'true'
                             
                             frame_count += 1

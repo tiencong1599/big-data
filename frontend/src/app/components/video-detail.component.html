@@ -101,6 +101,44 @@
       </div>
     </div>
 
+    <!-- Real-Time Charts Section (Collapsible) -->
+    <div class="charts-section" *ngIf="isStreaming">
+      <div class="section-header collapsible" (click)="toggleChartsSection()">
+        <h3>
+          <span class="toggle-icon">{{ isChartsExpanded ? '▼' : '▶' }}</span>
+          Real-Time Charts
+        </h3>
+      </div>
+      
+      <div class="charts-content" [class.expanded]="isChartsExpanded">
+        <div *ngIf="isChartsExpanded" class="charts-grid">
+          <!-- Loading skeleton while initializing -->
+          <div *ngIf="!timelineData" class="chart-skeleton">
+            <div class="skeleton-title"></div>
+            <div class="skeleton-chart"></div>
+          </div>
+          
+          <!-- Vehicle Timeline Chart -->
+          <div *ngIf="timelineData" class="chart-wrapper">
+            <h4>Vehicle Timeline</h4>
+            <app-vehicle-timeline-chart [data]="timelineData"></app-vehicle-timeline-chart>
+          </div>
+          
+          <!-- Speed Gauge Chart -->
+          <div *ngIf="maxSpeed > 0" class="chart-wrapper">
+            <h4>Maximum Speed Detected</h4>
+            <app-speed-gauge-chart [maxSpeed]="maxSpeed"></app-speed-gauge-chart>
+          </div>
+          
+          <!-- Vehicle Type Distribution Chart -->
+          <div *ngIf="vehicleTypeData" class="chart-wrapper">
+            <h4>Vehicle Type Distribution</h4>
+            <app-vehicle-type-chart [data]="vehicleTypeData"></app-vehicle-type-chart>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Speeding Vehicles Section (append-only) -->
     <div class="vehicles-section">
       <div class="section-header">

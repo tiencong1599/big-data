@@ -281,6 +281,9 @@ class FrameProcessor:
             print(f"  TOTAL:            {timing['total']:7.2f}ms  ({timing['theoretical_fps']:.1f} FPS)")
             print(f"{'='*70}\n")
 
+            # Get cumulative analytics metrics
+            analytics_metrics = tracker_instance.get_current_metrics()
+
             result = {
                 'video_id': str(video_id),
                 'frame_number': str(frame_number),
@@ -289,7 +292,9 @@ class FrameProcessor:
                 'processed_frame': processed_frame_base64,
                 'vehicles': json.dumps(vehicles),
                 'roi_polygon': json.dumps(roi_polygon),
-                'total_vehicles': str(len(vehicles)),
+                'total_vehicles': str(len(vehicles)),  # Current frame count
+                'cumulative_total_vehicles': str(analytics_metrics['total_vehicles_entered']),  # NEW: Cumulative total
+                'current_in_roi': str(analytics_metrics['current_vehicles_in_roi']),  # NEW: Current in ROI
                 'has_homography': str(use_homography and homography_matrix is not None).lower(),
                 'has_camera_matrix': 'false',
                 'error': ''

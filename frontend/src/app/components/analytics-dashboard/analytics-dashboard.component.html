@@ -1,0 +1,195 @@
+<div class="analytics-dashboard">
+  <div class="dashboard-header">
+    <h1>Analytics Dashboard</h1>
+    <div class="header-actions">
+      <button class="btn-secondary" (click)="clearCache()">Clear Cache</button>
+      <button class="btn-primary" (click)="exportCSV()">Export CSV</button>
+      <button class="btn-primary" (click)="exportJSON()">Export JSON</button>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <div class="filters-section">
+    <div class="filter-group">
+      <label>Video:</label>
+      <select [(ngModel)]="selectedVideoId" (change)="onVideoChange()" class="filter-select">
+        <option *ngFor="let video of videos" [value]="video.id">{{ video.name }}</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label>Session:</label>
+      <select [(ngModel)]="selectedSession" (change)="onSessionChange()" class="filter-select">
+        <option [value]="undefined">All Sessions</option>
+        <option *ngFor="let session of sessions" [value]="session.session_start">
+          {{ formatDate(session.session_start) }}
+        </option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Loading State -->
+  <div *ngIf="loading" class="loading">
+    <div class="spinner"></div>
+    <p>Loading analytics data...</p>
+  </div>
+
+  <!-- Error State -->
+  <div *ngIf="error" class="error-message">
+    {{ error }}
+  </div>
+
+  <!-- Tabs -->
+  <div *ngIf="!loading && !error" class="tabs">
+    <button 
+      class="tab-button" 
+      [class.active]="activeTab === 'overview'"
+      (click)="setActiveTab('overview')">
+      Overview
+    </button>
+    <button 
+      class="tab-button" 
+      [class.active]="activeTab === 'sessions'"
+      (click)="setActiveTab('sessions')">
+      Sessions
+    </button>
+    <button 
+      class="tab-button" 
+      [class.active]="activeTab === 'vehicles'"
+      (click)="setActiveTab('vehicles')">
+      Speeding Vehicles
+    </button>
+  </div>
+
+  <!-- Tab Content -->
+  <div *ngIf="!loading && !error" class="tab-content">
+    <!-- Overview Tab -->
+    <div *ngIf="activeTab === 'overview'" class="overview-tab">
+      <div *ngIf="summaries.length === 0" class="empty-state">
+        <p>No analytics data available for this video/session</p>
+      </div>
+
+      <div *ngIf="summaries.length > 0">
+        <!-- Summary Cards -->
+        <div class="summary-cards">
+          <div class="summary-card" *ngFor="let summary of summaries">
+            <h3>Session: {{ formatDate(summary.session_start) }}</h3>
+            <div class="card-stats">
+              <div class="stat-item">
+                <span class="stat-label">Total Vehicles:</span>
+                <span class="stat-value">{{ summary.total_vehicles_detected }}</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Speeding Violations:</span>
+                <span class="stat-value danger">{{ summary.total_speeding_violations }}</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Max Concurrent:</span>
+                <span class="stat-value">{{ summary.max_concurrent_vehicles }}</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Avg FPS:</span>
+                <span class="stat-value">{{ summary.avg_fps | number:'1.1-1' }}</span>
+              </div>
+            </div>
+
+            <!-- Speed Distribution -->
+            <div class="distribution-section" *ngIf="summary.speed_distribution">
+              <h4>Speed Distribution</h4>
+              <div class="distribution-bars">
+                <div class="bar-item">
+                  <span class="bar-label">60-70 km/h</span>
+                  <div class="bar-container">
+                    <div class="bar" [style.width.%]="(summary.speed_distribution.range_60_70 / summary.total_speeding_violations) * 100"></div>
+                  </div>
+                  <span class="bar-value">{{ summary.speed_distribution.range_60_70 }}</span>
+                </div>
+                <div class="bar-item">
+                  <span class="bar-label">70-80 km/h</span>
+                  <div class="bar-container">
+                    <div class="bar" [style.width.%]="(summary.speed_distribution.range_70_80 / summary.total_speeding_violations) * 100"></div>
+                  </div>
+                  <span class="bar-value">{{ summary.speed_distribution.range_70_80 }}</span>
+                </div>
+                <div class="bar-item">
+                  <span class="bar-label">80-90 km/h</span>
+                  <div class="bar-container">
+                    <div class="bar warning" [style.width.%]="(summary.speed_distribution.range_80_90 / summary.total_speeding_violations) * 100"></div>
+                  </div>
+                  <span class="bar-value">{{ summary.speed_distribution.range_80_90 }}</span>
+                </div>
+                <div class="bar-item">
+                  <span class="bar-label">90+ km/h</span>
+                  <div class="bar-container">
+                    <div class="bar danger" [style.width.%]="(summary.speed_distribution.range_90_plus / summary.total_speeding_violations) * 100"></div>
+                  </div>
+                  <span class="bar-value">{{ summary.speed_distribution.range_90_plus }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sessions Tab -->
+    <div *ngIf="activeTab === 'sessions'" class="sessions-tab">
+      <div *ngIf="sessions.length === 0" class="empty-state">
+        <p>No sessions found for this video</p>
+      </div>
+
+      <div *ngIf="sessions.length > 0" class="sessions-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Session Start</th>
+              <th>Session End</th>
+              <th>Total Vehicles</th>
+              <th>Speeding Violations</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let session of sessions">
+              <td>{{ formatDate(session.session_start) }}</td>
+              <td>{{ formatDate(session.session_end) }}</td>
+              <td>{{ session.total_vehicles }}</td>
+              <td class="danger">{{ session.speeding_violations }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Speeding Vehicles Tab -->
+    <div *ngIf="activeTab === 'vehicles'" class="vehicles-tab">
+      <div *ngIf="speedingVehicles.length === 0" class="empty-state">
+        <p>No speeding vehicles recorded</p>
+      </div>
+
+      <div *ngIf="speedingVehicles.length > 0" class="vehicles-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Track ID</th>
+              <th>Speed (km/h)</th>
+              <th>Vehicle Type</th>
+              <th>Timestamp</th>
+              <th>Confidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let vehicle of speedingVehicles">
+              <td>{{ vehicle.track_id }}</td>
+              <td class="speed-cell" [class.high-speed]="vehicle.speed >= 80">
+                {{ vehicle.speed | number:'1.1-1' }}
+              </td>
+              <td>{{ getVehicleTypeName(vehicle.class_id) }}</td>
+              <td>{{ formatDate(vehicle.timestamp) }}</td>
+              <td>{{ (vehicle.confidence * 100) | number:'1.0-0' }}%</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
