@@ -19,9 +19,6 @@ class Video(Base):
     fps = Column(Float, nullable=True)  # Video FPS
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
     updated_at = Column(TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # Relationship
-    analytics = relationship("VideoAnalytics", back_populates="video", cascade="all, delete-orphan")
 
     def to_dict(self):
         return {
@@ -85,17 +82,132 @@ def get_video_config(video_id):
     finally:
         db.close()
 
-# NEW TABLE: VideoAnalytics
-class VideoAnalytics(Base):
-    __tablename__ = 'video_analytics'
+# ============================================================================
+# PHASE 3: Analytics Models for Historical Storage
+# ============================================================================
+
+class VideoAnalyticsSnapshot(Base):
+    """Periodic snapshots of real-time analytics for trend analysis"""
+    __tablename__ = 'video_analytics_snapshots'
     
     id = Column(Integer, primary_key=True, index=True)
-    video_id = Column(Integer, ForeignKey('video.id'), nullable=False)
-    total_vehicles_count = Column(Integer, default=0)
-    avg_dwell_time = Column(Float, default=0.0)  # seconds
-    vehicle_type_distribution = Column(JSON, nullable=True)  # {"car": 10, "truck": 5, ...}
-    processed_at = Column(Float, nullable=False)  # Unix timestamp
+    video_id = Column(Integer, ForeignKey('video.id', ondelete='CASCADE'), nullable=False)
+    frame_number = Column(Integer, nullable=False)
+    timestamp = Column(Float, nullable=False)
+    
+    # Frame-level stats
+    total_vehicles = Column(Integer, default=0)
+    speeding_count = Column(Integer, default=0)
+    current_in_roi = Column(Integer, default=0)
+    
+    # Session metadata
+    session_start = Column(TIMESTAMP)
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
     
-    # Relationship
-    video = relationship("Video", back_populates="analytics")
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'video_id': self.video_id,
+            'frame_number': self.frame_number,
+            'timestamp': self.timestamp,
+            'total_vehicles': self.total_vehicles,
+            'speeding_count': self.speeding_count,
+            'current_in_roi': self.current_in_roi,
+            'session_start': self.session_start.isoformat() if self.session_start else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+
+
+class SpeedingVehicle(Base):
+    """Individual speeding vehicle records for compliance and audit"""
+    __tablename__ = 'speeding_vehicles'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    video_id = Column(Integer, ForeignKey('video.id', ondelete='CASCADE'), nullable=False)
+    
+    # Vehicle identification
+    track_id = Column(Integer, nullable=False)
+    
+    # Speed data
+    speed = Column(Float, nullable=False)
+    speed_unit = Column(String(10), default='km/h')
+    
+    # Vehicle classification
+    class_id = Column(Integer, nullable=False)
+    class_name = Column(String(50))
+    confidence = Column(Float)
+    
+    # Detection metadata
+    frame_number = Column(Integer, nullable=False)
+    timestamp = Column(Float, nullable=False)
+    detected_at = Column(TIMESTAMP, default=datetime.utcnow)
+    
+    # Session tracking
+    session_start = Column(TIMESTAMP)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'video_id': self.video_id,
+            'track_id': self.track_id,
+            'speed': self.speed,
+            'speed_unit': self.speed_unit,
+            'class_id': self.class_id,
+            'class_name': self.class_name,
+            'confidence': self.confidence,
+            'frame_number': self.frame_number,
+            'timestamp': self.timestamp,
+            'detected_at': self.detected_at.isoformat() if self.detected_at else None,
+            'session_start': self.session_start.isoformat() if self.session_start else None
+        }
+
+
+class VideoAnalyticsSummary(Base):
+    """Final aggregated analytics after video processing completes"""
+    __tablename__ = 'video_analytics_summary'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    video_id = Column(Integer, ForeignKey('video.id', ondelete='CASCADE'), nullable=False)
+    
+    # Aggregated counts
+    total_vehicles_detected = Column(Integer, default=0)
+    total_speeding_violations = Column(Integer, default=0)
+    max_concurrent_vehicles = Column(Integer, default=0)
+    
+    # Performance metrics
+    avg_processing_fps = Column(Float)
+    total_frames_processed = Column(Integer)
+    
+    # Vehicle type distribution
+    vehicle_type_distribution = Column(JSON)
+    
+    # Speed statistics
+    avg_speed = Column(Float)
+    max_speed = Column(Float)
+    speed_distribution = Column(JSON)
+    
+    # Session metadata
+    session_start = Column(TIMESTAMP)
+    session_end = Column(TIMESTAMP)
+    processing_duration_seconds = Column(Integer)
+    
+    created_at = Column(TIMESTAMP, default=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'video_id': self.video_id,
+            'total_vehicles_detected': self.total_vehicles_detected,
+            'total_speeding_violations': self.total_speeding_violations,
+            'max_concurrent_vehicles': self.max_concurrent_vehicles,
+            'avg_processing_fps': self.avg_processing_fps,
+            'total_frames_processed': self.total_frames_processed,
+            'vehicle_type_distribution': self.vehicle_type_distribution,
+            'avg_speed': self.avg_speed,
+            'max_speed': self.max_speed,
+            'speed_distribution': self.speed_distribution,
+            'session_start': self.session_start.isoformat() if self.session_start else None,
+            'session_end': self.session_end.isoformat() if self.session_end else None,
+            'processing_duration_seconds': self.processing_duration_seconds,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }

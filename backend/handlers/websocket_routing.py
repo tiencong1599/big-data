@@ -10,6 +10,7 @@ import redis
 import os
 from typing import Dict, List, Set
 from config.settings import ALLOWED_ORIGINS
+from handlers.analytics_persistence import get_persistence_handler
 
 # ============================================================================
 # GLOBAL STATE MANAGEMENT
@@ -135,6 +136,7 @@ class BackendAnalyticsHandler(tornado.websocket.WebSocketHandler):
         """
         Receives analytics data from Redis consumer
         Routes to appropriate analytics_metrics_<video_id> channels
+        Phase 3: Also persists to database asynchronously
         """
         try:
             data = json.loads(message)
@@ -147,6 +149,13 @@ class BackendAnalyticsHandler(tornado.websocket.WebSocketHandler):
                 if not video_id:
                     print(f"[BACKEND-ANALYTICS-CHANNEL] ❌ Error: No video_id in analytics data")
                     return
+                
+                # Phase 3: Persist analytics data asynchronously (non-blocking)
+                persistence_handler = get_persistence_handler()
+                tornado.ioloop.IOLoop.current().spawn_callback(
+                    persistence_handler.persist_analytics_snapshot,
+                    analytics_data
+                )
                 
                 # Determine target analytics channel
                 channel_name = f"analytics_metrics_{video_id}"
