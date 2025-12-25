@@ -25,8 +25,7 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
   // Analytics data (from analytics channel)
   stats: FrameStats = { total_vehicles: 0, speeding_count: 0, current_in_roi: 0 };
   speedingVehicles: VehicleData[] = [];
-  private displayedSpeedingIds = new Set<number>();
-  
+  private displayedSpeedingIds = new Set<number>();  private readonly MAX_SPEEDING_LIST_SIZE = 100; // Cap to prevent memory issues  
   // Charts data
   isChartsExpanded = false;
   timelineData?: TimelineData;
@@ -131,6 +130,14 @@ export class VideoDetailComponent implements OnInit, OnDestroy, AfterViewInit {
         vehicle.detectedAt = new Date();
         this.speedingVehicles.push(vehicle);
         this.displayedSpeedingIds.add(vehicle.track_id);
+        
+        // Remove oldest entries if exceeds max size (prevent memory bloat)
+        if (this.speedingVehicles.length > this.MAX_SPEEDING_LIST_SIZE) {
+          const removed = this.speedingVehicles.shift();
+          if (removed) {
+            this.displayedSpeedingIds.delete(removed.track_id);
+          }
+        }
         
         // Auto-scroll to bottom
         setTimeout(() => {

@@ -15,7 +15,8 @@ export class VehicleTimelineChartComponent extends BaseChartComponent implements
   @ViewChild('chartCanvas', { static: true }) chartCanvas!: ElementRef<HTMLCanvasElement>;
   @Input() set data(value: TimelineData | undefined) {
     if (value) {
-      this.addDataPoint(value);
+      // Throttle at input level to prevent data accumulation
+      this.throttledUpdate(() => this.addDataPoint(value));
     }
   }
 
@@ -106,20 +107,18 @@ export class VehicleTimelineChartComponent extends BaseChartComponent implements
   }
 
   private addDataPoint(data: TimelineData): void {
-    this.throttledUpdate(() => {
-      // Add new data
-      this.timestamps.push(data.timestamp);
-      this.totalVehiclesData.push(data.totalVehicles);
-      this.speedingVehiclesData.push(data.speedingVehicles);
+    // Add new data
+    this.timestamps.push(data.timestamp);
+    this.totalVehiclesData.push(data.totalVehicles);
+    this.speedingVehiclesData.push(data.speedingVehicles);
 
-      // Remove oldest data if exceeds max points
-      if (this.timestamps.length > this.MAX_DATA_POINTS) {
-        this.timestamps.shift();
-        this.totalVehiclesData.shift();
-        this.speedingVehiclesData.shift();
-      }
+    // Remove oldest data if exceeds max points
+    if (this.timestamps.length > this.MAX_DATA_POINTS) {
+      this.timestamps.shift();
+      this.totalVehiclesData.shift();
+      this.speedingVehiclesData.shift();
+    }
 
-      this.updateChart();
-    });
+    this.updateChart();
   }
 }
