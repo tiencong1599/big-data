@@ -24,7 +24,7 @@ class VehicleTracker:
     - Occlusions are typically brief
     - Detection quality is high
     """
-    def __init__(self, max_age=30, min_hits=3, iou_threshold=0.3):
+    def __init__(self, max_age=30, min_hits=3, iou_threshold=0.5):
         """
         Initializes the SORT tracker.
         

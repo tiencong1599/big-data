@@ -9,15 +9,18 @@ import numpy as np
 MODEL_FILE = None
 DEVICE = os.getenv('DEVICE', 'cuda:0')  # 'cuda:0' for GPU, 'cpu' for CPU
 
-# Auto-detect available model file
-if os.path.exists('yolov8s.engine'):
+# Auto-detect available model file - prefer nano for speed
+if os.path.exists('yolov8n.engine'):
+    MODEL_FILE = 'yolov8n.engine'
+    print("✓ Found TensorRT YOLOv8n (nano) engine - fastest inference")
+elif os.path.exists('yolov8s.engine'):
     MODEL_FILE = 'yolov8s.engine'
-    print("✓ Found TensorRT engine model (GPU acceleration)")
+    print("✓ Found TensorRT YOLOv8s (small) engine - GPU acceleration")
 elif os.path.exists('yolov8s.onnx'):
     MODEL_FILE = 'yolov8s.onnx'
     print("✓ Found ONNX model (CPU/GPU)")
 else:
-    raise FileNotFoundError("No model file found! Place yolov8s.engine or yolov8s.onnx in spark/ directory")
+    raise FileNotFoundError("No model file found! Place yolov8n.engine or yolov8s.engine in spark/ directory")
 
 # YOLO Model Path
 YOLO_MODEL_PATH = MODEL_FILE

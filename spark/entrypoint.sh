@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-ONNX_MODEL="yolov8s.onnx"
-ENGINE_MODEL="yolov8s.engine"
+ONNX_MODEL="yolov8n.onnx"
+ENGINE_MODEL="yolov8n.engine"
 
 echo "============================================="
 echo "   CONTAINER DEBUG INFO"

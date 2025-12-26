@@ -40,6 +40,9 @@ class VehicleDetector:
 
         self.context = self.engine.create_execution_context()
         
+        # Create CUDA stream for async execution
+        self.stream = cuda.Stream()
+        
         self.inputs = []
         self.outputs = []
         self.allocations = []
@@ -116,8 +119,8 @@ class VehicleDetector:
         # 1. Preprocess
         input_tensor, scale, input_size = self.preprocess(image)
         
-        # 2. Copy to GPU
-        cuda.memcpy_htod(self.inputs[0]['allocation'], np.ascontiguousarray(input_tensor))
+        # 2. Copy to GPU (async)
+        cuda.memcpy_htod_async(self.inputs[0]['allocation'], np.ascontiguousarray(input_tensor), self.stream)
         
         # 3. Set address & Execute Async V3
         for i in range(len(self.inputs)):
@@ -125,15 +128,18 @@ class VehicleDetector:
         for i in range(len(self.outputs)):
             self.context.set_tensor_address(self.outputs[i]['name'], int(self.outputs[i]['allocation']))
 
-        self.context.execute_async_v3(stream_handle=0)
+        self.context.execute_async_v3(stream_handle=self.stream.handle)
         
-        # 4. Copy back to CPU
+        # 4. Copy back to CPU (async)
         # output_data size calculation depends on implementation, ensure generic enough
         output_binding = self.outputs[0]
         output_data = np.zeros(output_binding['size'] // 4, dtype=np.float32)
-        cuda.memcpy_dtoh(output_data, output_binding['allocation'])
+        cuda.memcpy_dtoh_async(output_data, output_binding['allocation'], self.stream)
         
-        # 5. Post-process (Reshape & Transpose)
+        # 5. Synchronize stream to ensure all operations complete
+        self.stream.synchronize()
+        
+        # 6. Post-process (Reshape & Transpose)
         # YOLOv8 output: [1, 4+nc, 8400] -> [1, 84, 8400] for COCO
         num_anchors = 8400
         num_channels = output_data.size // num_anchors
