@@ -110,19 +110,30 @@ def cleanup_and_summarize(**context):
             avg_speed = sum(speeds) / len(speeds)
             max_speed = max(speeds)
             
-            # Speed distribution
+            # Speed distribution - count unique vehicles per range (use max speed per vehicle)
+            # Group by track_id and get max speed for each vehicle
+            vehicle_max_speeds = {}
+            for v in speeding_vehicles:
+                if v.track_id not in vehicle_max_speeds or v.speed > vehicle_max_speeds[v.track_id]:
+                    vehicle_max_speeds[v.track_id] = v.speed
+            
+            # Now count unique vehicles in each speed range based on their max recorded speed
+            unique_speeds = list(vehicle_max_speeds.values())
             speed_distribution = {
-                '60-70': len([s for s in speeds if 60 <= s < 70]),
-                '70-80': len([s for s in speeds if 70 <= s < 80]),
-                '80-90': len([s for s in speeds if 80 <= s < 90]),
-                '90+': len([s for s in speeds if s >= 90])
+                'range_60_70': len([s for s in unique_speeds if 60 <= s < 70]),
+                'range_70_80': len([s for s in unique_speeds if 70 <= s < 80]),
+                'range_80_90': len([s for s in unique_speeds if 80 <= s < 90]),
+                'range_90_plus': len([s for s in unique_speeds if s >= 90])
             }
             
-            # Vehicle type distribution
+            # Vehicle type distribution - also count unique vehicles
             vehicle_types = {}
+            seen_track_ids = set()
             for v in speeding_vehicles:
-                class_name = v.class_name or 'unknown'
-                vehicle_types[class_name] = vehicle_types.get(class_name, 0) + 1
+                if v.track_id not in seen_track_ids:
+                    seen_track_ids.add(v.track_id)
+                    class_name = v.class_name or 'unknown'
+                    vehicle_types[class_name] = vehicle_types.get(class_name, 0) + 1
         else:
             avg_speed = 0.0
             max_speed = 0.0

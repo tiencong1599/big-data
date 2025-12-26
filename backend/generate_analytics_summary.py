@@ -31,7 +31,7 @@ def generate_summary_for_session(video_id: int, session_start: datetime):
         
         # Calculate aggregated metrics
         total_vehicles = max([s.total_vehicles for s in snapshots]) if snapshots else 0
-        total_speeding = len(speeding_vehicles)
+        total_speeding = len(set(v.track_id for v in speeding_vehicles))  # Unique vehicles
         max_concurrent = max([s.current_in_roi for s in snapshots]) if snapshots else 0
         total_frames = max([s.frame_number for s in snapshots]) if snapshots else 0
         
@@ -44,23 +44,30 @@ def generate_summary_for_session(video_id: int, session_start: datetime):
         # Calculate average FPS
         avg_fps = total_frames / duration_seconds if duration_seconds > 0 else 0
         
-        # Calculate speed statistics
-        speeds = [v.speed for v in speeding_vehicles if v.speed]
-        avg_speed = sum(speeds) / len(speeds) if speeds else 0
-        max_speed = max(speeds) if speeds else 0
+        # Group by track_id and get max speed for each unique vehicle
+        vehicle_max_speeds = {}
+        vehicle_class_names = {}
+        for v in speeding_vehicles:
+            if v.track_id not in vehicle_max_speeds or v.speed > vehicle_max_speeds[v.track_id]:
+                vehicle_max_speeds[v.track_id] = v.speed
+                vehicle_class_names[v.track_id] = v.class_name or 'unknown'
         
-        # Speed distribution (buckets: 60-70, 70-80, 80-90, 90+)
+        # Calculate speed statistics from unique vehicles
+        unique_speeds = list(vehicle_max_speeds.values())
+        avg_speed = sum(unique_speeds) / len(unique_speeds) if unique_speeds else 0
+        max_speed = max(unique_speeds) if unique_speeds else 0
+        
+        # Speed distribution (buckets: 60-70, 70-80, 80-90, 90+) - unique vehicles
         speed_distribution = {
-            'range_60_70': len([s for s in speeds if 60 <= s < 70]),
-            'range_70_80': len([s for s in speeds if 70 <= s < 80]),
-            'range_80_90': len([s for s in speeds if 80 <= s < 90]),
-            'range_90_plus': len([s for s in speeds if s >= 90])
+            'range_60_70': len([s for s in unique_speeds if 60 <= s < 70]),
+            'range_70_80': len([s for s in unique_speeds if 70 <= s < 80]),
+            'range_80_90': len([s for s in unique_speeds if 80 <= s < 90]),
+            'range_90_plus': len([s for s in unique_speeds if s >= 90])
         }
         
-        # Vehicle type distribution
+        # Vehicle type distribution - unique vehicles
         vehicle_types = {}
-        for vehicle in speeding_vehicles:
-            class_name = vehicle.class_name or 'unknown'
+        for track_id, class_name in vehicle_class_names.items():
             vehicle_types[class_name] = vehicle_types.get(class_name, 0) + 1
         
         # Create summary record
