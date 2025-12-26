@@ -162,6 +162,75 @@ class SpeedingVehicle(Base):
         }
 
 
+class ViolationCapture(Base):
+    """
+    Captured frames and metadata for speed violations.
+    Stores violation evidence with annotated frame images.
+    """
+    __tablename__ = 'violation_captures'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    video_id = Column(Integer, ForeignKey('video.id', ondelete='CASCADE'), nullable=False)
+    
+    # Vehicle identification
+    track_id = Column(Integer, nullable=False)
+    
+    # Speed violation data
+    speed = Column(Float, nullable=False)  # Actual speed in km/h
+    speed_limit = Column(Float, nullable=False, default=60.0)  # Speed limit threshold
+    speed_excess = Column(Float, nullable=False)  # Amount over limit
+    
+    # Vehicle classification
+    vehicle_type = Column(String(50), nullable=False)  # car, truck, bus, motorcycle
+    class_id = Column(Integer, nullable=False)  # YOLO class ID
+    confidence = Column(Float)  # Detection confidence
+    
+    # Frame capture data
+    frame_number = Column(Integer, nullable=False)
+    frame_image_path = Column(String(500), nullable=False)  # Relative path to image
+    thumbnail_path = Column(String(500))  # Relative path to thumbnail
+    
+    # Bounding box coordinates
+    bbox_x1 = Column(Integer)
+    bbox_y1 = Column(Integer)
+    bbox_x2 = Column(Integer)
+    bbox_y2 = Column(Integer)
+    
+    # Timestamps
+    violation_timestamp = Column(TIMESTAMP, nullable=False)  # When violation occurred
+    video_timestamp = Column(Float)  # Timestamp within video
+    created_at = Column(TIMESTAMP, default=datetime.utcnow)
+    
+    # Session tracking
+    session_start = Column(TIMESTAMP)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'video_id': self.video_id,
+            'track_id': self.track_id,
+            'speed': self.speed,
+            'speed_limit': self.speed_limit,
+            'speed_excess': self.speed_excess,
+            'vehicle_type': self.vehicle_type,
+            'class_id': self.class_id,
+            'confidence': self.confidence,
+            'frame_number': self.frame_number,
+            'frame_image_path': self.frame_image_path,
+            'thumbnail_path': self.thumbnail_path,
+            'bbox': {
+                'x1': self.bbox_x1,
+                'y1': self.bbox_y1,
+                'x2': self.bbox_x2,
+                'y2': self.bbox_y2
+            },
+            'violation_timestamp': self.violation_timestamp.isoformat() if self.violation_timestamp else None,
+            'video_timestamp': self.video_timestamp,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'session_start': self.session_start.isoformat() if self.session_start else None
+        }
+
+
 class VideoAnalyticsSummary(Base):
     """Final aggregated analytics after video processing completes"""
     __tablename__ = 'video_analytics_summary'

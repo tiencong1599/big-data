@@ -9,6 +9,11 @@ from detector import VehicleDetector
 from tracker import VehicleTracker
 from speed_estimator import SpeedEstimator
 from analytics_tracker import VehicleAnalyticsTracker  # NEW IMPORT
+from violation_capture_handler import (
+    ViolationCaptureHandler, 
+    ViolationData,
+    get_violation_handler
+)  # VIOLATION CAPTURE
 import visualizer
 import config
 
@@ -18,6 +23,11 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 REDIS_INPUT_STREAM = os.getenv("REDIS_INPUT_STREAM", "video-frames")
 REDIS_OUTPUT_STREAM = os.getenv("REDIS_OUTPUT_STREAM", "processed-frames")
 ENABLE_VEHICLE_DETECTION = os.getenv("ENABLE_VEHICLE_DETECTION", "true").lower() == "true"
+
+# Violation capture configuration
+VIOLATION_CAPTURES_DIR = os.getenv("VIOLATION_CAPTURES_DIR", "/app/violation_captures")
+SPEED_LIMIT = float(os.getenv("SPEED_LIMIT", "60.0"))  # km/h
+ENABLE_VIOLATION_CAPTURE = os.getenv("ENABLE_VIOLATION_CAPTURE", "true").lower() == "true"
 
 # Global model instances
 detector = None
@@ -29,6 +39,22 @@ class FrameProcessor:
         # Analytics trackers per video
         self.analytics_trackers = {}
         self.redis_client = redis_client
+        
+        # Session tracking for violation captures
+        self.session_starts = {}  # video_id -> datetime
+        
+        # Initialize violation capture handler (singleton)
+        if ENABLE_VIOLATION_CAPTURE:
+            self.violation_handler = get_violation_handler(
+                capture_dir=VIOLATION_CAPTURES_DIR,
+                jpeg_quality=85,
+                max_queue_size=100,
+                batch_size=10
+            )
+            print(f"[VIOLATION-CAPTURE] Enabled - Dir: {VIOLATION_CAPTURES_DIR}, Limit: {SPEED_LIMIT} km/h")
+        else:
+            self.violation_handler = None
+            print("[VIOLATION-CAPTURE] Disabled")
     
     def initialize_models(self):
         """Initialize vehicle detection models"""
@@ -241,6 +267,70 @@ class FrameProcessor:
                         tracker_instance.set_vehicle_type(track_id, int(det_class))
                         break
             
+            # ===================================================================
+            # VIOLATION CAPTURE - Capture frames for speeding vehicles
+            # ===================================================================
+            t0 = time.time()
+            violations_captured = 0
+            
+            if self.violation_handler and ENABLE_VIOLATION_CAPTURE:
+                # Get or create session start for this video
+                if video_id not in self.session_starts:
+                    from datetime import datetime
+                    self.session_starts[video_id] = datetime.utcnow()
+                
+                session_start = self.session_starts[video_id]
+                
+                # Check each tracked vehicle for speed violations
+                for track_id, bbox in tracks:
+                    speed = speeds.get(track_id, 0.0)
+                    
+                    # Check if should capture (handles deduplication internally)
+                    if self.violation_handler.should_capture(
+                        video_id=video_id,
+                        track_id=track_id,
+                        speed=speed,
+                        speed_limit=SPEED_LIMIT,
+                        session_start=session_start
+                    ):
+                        # Get vehicle class info
+                        class_id = 2  # Default to car
+                        confidence = 0.0
+                        for det_bbox, det_conf, det_class in detections:
+                            if self._bbox_iou(bbox, det_bbox) > 0.5:
+                                class_id = int(det_class)
+                                confidence = float(det_conf)
+                                break
+                        
+                        vehicle_type = ViolationCaptureHandler.get_vehicle_type(class_id)
+                        
+                        # Create violation data
+                        violation_data = ViolationData(
+                            video_id=video_id,
+                            track_id=int(track_id),
+                            speed=float(speed),
+                            speed_limit=SPEED_LIMIT,
+                            vehicle_type=vehicle_type,
+                            class_id=class_id,
+                            confidence=confidence,
+                            frame_number=frame_number,
+                            bbox={
+                                'x1': int(bbox[0]),
+                                'y1': int(bbox[1]),
+                                'x2': int(bbox[2]),
+                                'y2': int(bbox[3])
+                            },
+                            video_timestamp=timestamp / 1000.0,
+                            session_start=session_start
+                        )
+                        
+                        # Queue for capture (non-blocking)
+                        if self.violation_handler.capture_violation(frame, violation_data):
+                            violations_captured += 1
+            
+            timing['violation_capture'] = (time.time() - t0) * 1000
+            timing['violations_captured'] = violations_captured
+            
             # 6. Visualization
             t0 = time.time()
             annotated_frame = visualizer.draw_results(frame, tracks, speeds)
@@ -277,6 +367,7 @@ class FrameProcessor:
             print(f"  Visualization:    {timing['visualization']:7.2f}ms")
             print(f"  Encode:           {timing['encode']:7.2f}ms  ({timing['encoded_size_kb']:.1f}KB)")
             print(f"  Analytics:        {timing['analytics']:7.2f}ms")
+            print(f"  Violation Cap:    {timing.get('violation_capture', 0):7.2f}ms  ({timing.get('violations_captured', 0)} captured)")
             print(f"  {'─'*70}")
             print(f"  TOTAL:            {timing['total']:7.2f}ms  ({timing['theoretical_fps']:.1f} FPS)")
             print(f"{'='*70}\n")

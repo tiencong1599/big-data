@@ -15,10 +15,14 @@ import { SpeedGaugeChartComponent } from './components/shared/charts/speed-gauge
 import { VehicleTypeChartComponent } from './components/shared/charts/vehicle-type-chart/vehicle-type-chart.component';
 import { AnalyticsDashboardComponent } from './components/analytics-dashboard/analytics-dashboard.component';
 
+// Violation Dashboard (standalone component)
+import { ViolationDashboardComponent } from './components/violation-dashboard/violation-dashboard.component';
+
 import { VideoService } from './services/video.service';
 import { WebsocketService } from './services/websocket.service';
 import { AnalyticsService } from './services/analytics.service';
 import { AnalyticsCacheService } from './services/analytics-cache.service';
+import { ViolationService } from './services/violation.service';
 
 @NgModule({
   declarations: [
@@ -35,13 +39,15 @@ import { AnalyticsCacheService } from './services/analytics-cache.service';
     VehicleTimelineChartComponent,
     SpeedGaugeChartComponent,
     VehicleTypeChartComponent,
-    AnalyticsDashboardComponent
+    AnalyticsDashboardComponent,
+    ViolationDashboardComponent  // Standalone component imported here
   ],
   providers: [
     VideoService,
     WebsocketService,
     AnalyticsService,
-    AnalyticsCacheService
+    AnalyticsCacheService,
+    ViolationService
   ],
   bootstrap: [AppComponent]
 })

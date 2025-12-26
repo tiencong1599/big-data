@@ -1,0 +1,477 @@
+<div class="violation-dashboard">
+  <!-- Header -->
+  <header class="dashboard-header">
+    <div class="header-content">
+      <h1>🚨 Speed Violation Stats Storage</h1>
+      <p class="subtitle">Captured violations with frame evidence</p>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-secondary" (click)="loadViolations()" [disabled]="loading">
+        🔄 Refresh
+      </button>
+    </div>
+  </header>
+
+  <!-- Stats Cards -->
+  <section class="stats-section" *ngIf="stats">
+    <div class="stats-grid">
+      <!-- Total Violations -->
+      <div class="stat-card total">
+        <div class="stat-icon">📊</div>
+        <div class="stat-content">
+          <span class="stat-value">{{ stats.total_violations | number }}</span>
+          <span class="stat-label">Total Violations</span>
+        </div>
+      </div>
+      
+      <!-- Recent (24h) -->
+      <div class="stat-card recent">
+        <div class="stat-icon">🕐</div>
+        <div class="stat-content">
+          <span class="stat-value">{{ stats.recent_violations_24h | number }}</span>
+          <span class="stat-label">Last 24 Hours</span>
+        </div>
+      </div>
+      
+      <!-- Average Speed -->
+      <div class="stat-card speed">
+        <div class="stat-icon">⚡</div>
+        <div class="stat-content">
+          <span class="stat-value">{{ stats.speed_stats.avg_speed | number:'1.1-1' }}</span>
+          <span class="stat-label">Avg Speed (km/h)</span>
+        </div>
+      </div>
+      
+      <!-- Max Speed -->
+      <div class="stat-card danger">
+        <div class="stat-icon">🔥</div>
+        <div class="stat-content">
+          <span class="stat-value">{{ stats.speed_stats.max_speed | number:'1.1-1' }}</span>
+          <span class="stat-label">Max Speed (km/h)</span>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Vehicle Type Stats -->
+    <div class="vehicle-type-stats" *ngIf="stats.by_vehicle_type.length > 0">
+      <h3>By Vehicle Type</h3>
+      <div class="type-cards">
+        <div 
+          class="type-card" 
+          *ngFor="let typeStat of stats.by_vehicle_type"
+          [class.active]="filter.vehicle_type === typeStat.vehicle_type"
+          (click)="setVehicleTypeFilter(filter.vehicle_type === typeStat.vehicle_type ? null : typeStat.vehicle_type)">
+          <span class="type-emoji">{{ getVehicleEmoji(typeStat.vehicle_type) }}</span>
+          <span class="type-count">{{ typeStat.count }}</span>
+          <span class="type-name">{{ typeStat.vehicle_type | titlecase }}</span>
+          <span class="type-avg">Avg: {{ typeStat.avg_speed | number:'1.0-0' }} km/h</span>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Speed Distribution -->
+    <div class="speed-distribution">
+      <h3>Speed Distribution</h3>
+      <div class="distribution-chart">
+        <div class="bar-item" *ngFor="let item of getSpeedRangeData()">
+          <span class="bar-label">{{ item.range }} km/h</span>
+          <div class="bar-container">
+            <div 
+              class="bar" 
+              [class]="getSpeedClass(item.range === '100+' ? 100 : +item.range.split('-')[0])"
+              [style.width.%]="item.percentage">
+            </div>
+          </div>
+          <span class="bar-value">{{ item.count }}</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Filters -->
+  <section class="filters-section">
+    <div class="filters-header">
+      <h3>🔍 Filters</h3>
+      <button class="btn btn-link" (click)="clearFilters()" *ngIf="filter.video_id || filter.vehicle_type || filter.min_speed || filter.max_speed">
+        Clear All
+      </button>
+    </div>
+    
+    <div class="filter-row">
+      <div class="filter-item">
+        <label>Video</label>
+        <select [(ngModel)]="filter.video_id" (change)="onFilterChange()">
+          <option [ngValue]="undefined">All Videos</option>
+          <option *ngFor="let video of videos" [ngValue]="video.id">
+            {{ video.name }}
+          </option>
+        </select>
+      </div>
+      
+      <div class="filter-item">
+        <label>Vehicle Type</label>
+        <select [(ngModel)]="filter.vehicle_type" (change)="onFilterChange()">
+          <option [ngValue]="undefined">All Types</option>
+          <option *ngFor="let type of vehicleTypes" [value]="type">
+            {{ getVehicleEmoji(type) }} {{ type | titlecase }}
+          </option>
+        </select>
+      </div>
+      
+      <div class="filter-item">
+        <label>Min Speed (km/h)</label>
+        <input 
+          type="number" 
+          [(ngModel)]="filter.min_speed" 
+          (input)="onFilterChange()" 
+          placeholder="60"
+          min="0"
+          max="300">
+      </div>
+      
+      <div class="filter-item">
+        <label>Max Speed (km/h)</label>
+        <input 
+          type="number" 
+          [(ngModel)]="filter.max_speed" 
+          (input)="onFilterChange()" 
+          placeholder="200"
+          min="0"
+          max="300">
+      </div>
+      
+      <div class="filter-item">
+        <label>From Date</label>
+        <input 
+          type="date" 
+          [(ngModel)]="filter.date_from" 
+          (change)="onFilterChange()">
+      </div>
+      
+      <div class="filter-item">
+        <label>To Date</label>
+        <input 
+          type="date" 
+          [(ngModel)]="filter.date_to" 
+          (change)="onFilterChange()">
+      </div>
+    </div>
+    
+    <div class="filter-actions">
+      <div class="bulk-actions" *ngIf="hasSelection">
+        <span class="selection-count">{{ selectedIds.size }} selected</span>
+        <button class="btn btn-danger btn-sm" (click)="bulkDelete()">
+          🗑️ Delete Selected
+        </button>
+      </div>
+      
+      <div class="export-actions">
+        <button class="btn btn-outline" (click)="exportData('csv')">
+          📥 Export CSV
+        </button>
+        <button class="btn btn-outline" (click)="exportData('json')">
+          📥 Export JSON
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Loading State -->
+  <div class="loading-state" *ngIf="loading">
+    <div class="spinner"></div>
+    <p>Loading violations...</p>
+  </div>
+
+  <!-- Error State -->
+  <div class="error-state" *ngIf="error">
+    <p>{{ error }}</p>
+    <button class="btn btn-primary" (click)="loadViolations()">Retry</button>
+  </div>
+
+  <!-- Violations Grid -->
+  <section class="violations-section" *ngIf="!loading && violations.length > 0">
+    <div class="violations-header">
+      <div class="results-info">
+        Showing {{ (currentPage - 1) * pageSize + 1 }} - {{ (currentPage - 1) * pageSize + violations.length }} of {{ totalViolations }} violations
+      </div>
+      
+      <div class="view-options">
+        <label>Per page:</label>
+        <select [(ngModel)]="pageSize" (change)="onPageSizeChange()">
+          <option *ngFor="let size of pageSizeOptions" [value]="size">{{ size }}</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="violations-grid">
+      <div 
+        class="violation-card" 
+        *ngFor="let violation of violations; trackBy: trackByViolation"
+        [class.selected]="isSelected(violation)"
+        (click)="openImageModal(violation)">
+        
+        <!-- Selection checkbox -->
+        <div class="selection-checkbox" (click)="$event.stopPropagation()">
+          <input 
+            type="checkbox" 
+            [checked]="isSelected(violation)"
+            (change)="toggleSelection(violation)">
+        </div>
+        
+        <!-- Thumbnail -->
+        <div class="violation-thumbnail">
+          <img 
+            [src]="getThumbnailUrl(violation)" 
+            [alt]="'Violation ' + violation.id"
+            loading="lazy"
+            (error)="onThumbnailError($event)">
+          <div class="speed-badge" [class]="getSpeedClass(violation.speed)">
+            {{ violation.speed | number:'1.0-0' }} km/h
+          </div>
+        </div>
+        
+        <!-- Info -->
+        <div class="violation-info">
+          <div class="info-row">
+            <span class="label">Vehicle:</span>
+            <span class="value">
+              {{ getVehicleEmoji(violation.vehicle_type) }}
+              {{ violation.vehicle_type | titlecase }}
+            </span>
+          </div>
+          <div class="info-row">
+            <span class="label">Excess:</span>
+            <span class="value danger">+{{ violation.speed_excess | number:'1.1-1' }} km/h</span>
+          </div>
+          <div class="info-row">
+            <span class="label">Video:</span>
+            <span class="value">{{ getVideoName(violation.video_id) }}</span>
+          </div>
+          <div class="info-row">
+            <span class="label">Time:</span>
+            <span class="value">{{ formatTime(violation.violation_timestamp) }}</span>
+          </div>
+          <div class="info-row">
+            <span class="label">Track:</span>
+            <span class="value">#{{ violation.track_id }}</span>
+          </div>
+        </div>
+        
+        <!-- Actions -->
+        <div class="violation-actions">
+          <button 
+            class="btn-icon delete" 
+            (click)="confirmDelete(violation); $event.stopPropagation()" 
+            title="Delete">
+            🗑️
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pagination -->
+    <div class="pagination" *ngIf="totalPages > 1">
+      <button 
+        class="btn btn-sm" 
+        [disabled]="currentPage === 1" 
+        (click)="goToPage(1)">
+        ««
+      </button>
+      <button 
+        class="btn btn-sm" 
+        [disabled]="currentPage === 1" 
+        (click)="goToPage(currentPage - 1)">
+        «
+      </button>
+      
+      <button 
+        *ngFor="let page of pageNumbers"
+        class="btn btn-sm"
+        [class.active]="page === currentPage"
+        (click)="goToPage(page)">
+        {{ page }}
+      </button>
+      
+      <button 
+        class="btn btn-sm" 
+        [disabled]="currentPage === totalPages" 
+        (click)="goToPage(currentPage + 1)">
+        »
+      </button>
+      <button 
+        class="btn btn-sm" 
+        [disabled]="currentPage === totalPages" 
+        (click)="goToPage(totalPages)">
+        »»
+      </button>
+      
+      <span class="page-info">
+        Page {{ currentPage }} of {{ totalPages }}
+      </span>
+    </div>
+  </section>
+
+  <!-- Empty State -->
+  <div class="empty-state" *ngIf="!loading && violations.length === 0">
+    <div class="empty-icon">🚗</div>
+    <h3>No Violations Found</h3>
+    <p>No speed violations match your current filters.</p>
+    <button class="btn btn-primary" (click)="clearFilters()" *ngIf="filter.video_id || filter.vehicle_type">
+      Clear Filters
+    </button>
+  </div>
+
+  <!-- Image Modal -->
+  <div class="modal-overlay" *ngIf="showImageModal" (click)="closeImageModal()">
+    <div class="modal-content violation-modal" (click)="$event.stopPropagation()">
+      <button class="modal-close" (click)="closeImageModal()">×</button>
+      
+      <div class="modal-body" *ngIf="selectedViolation">
+        <!-- Full Resolution Image Section -->
+        <div class="modal-image-section">
+          <div class="image-container" [class.loading]="imageLoading">
+            <!-- Loading Spinner -->
+            <div class="image-loading" *ngIf="imageLoading">
+              <div class="spinner"></div>
+              <p>Loading full image...</p>
+            </div>
+            
+            <!-- Full Image -->
+            <img 
+              [src]="getImageUrl(selectedViolation)" 
+              [alt]="'Violation ' + selectedViolation.id"
+              (load)="onImageLoad()"
+              (error)="onImageError($event)"
+              [class.loaded]="!imageLoading && !imageError">
+            
+            <!-- Error State -->
+            <div class="image-error" *ngIf="imageError">
+              <span class="error-icon">⚠️</span>
+              <p>Image not available</p>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Violation Details Section -->
+        <div class="modal-details-section">
+          <h3>🚨 Violation Details</h3>
+          
+          <div class="detail-grid">
+            <!-- Speed Info -->
+            <div class="detail-card speed-highlight">
+              <div class="detail-icon">⚡</div>
+              <div class="detail-content">
+                <span class="detail-label">Speed</span>
+                <span class="detail-value large" [class]="getSpeedClass(selectedViolation.speed)">
+                  {{ selectedViolation.speed | number:'1.1-1' }} km/h
+                </span>
+              </div>
+            </div>
+            
+            <div class="detail-card">
+              <div class="detail-icon">🚧</div>
+              <div class="detail-content">
+                <span class="detail-label">Speed Limit</span>
+                <span class="detail-value">{{ selectedViolation.speed_limit }} km/h</span>
+              </div>
+            </div>
+            
+            <div class="detail-card excess-highlight">
+              <div class="detail-icon">⚠️</div>
+              <div class="detail-content">
+                <span class="detail-label">Speed Excess</span>
+                <span class="detail-value danger">+{{ selectedViolation.speed_excess | number:'1.1-1' }} km/h</span>
+              </div>
+            </div>
+            
+            <!-- Vehicle Info -->
+            <div class="detail-card">
+              <div class="detail-icon">{{ getVehicleEmoji(selectedViolation.vehicle_type) }}</div>
+              <div class="detail-content">
+                <span class="detail-label">Vehicle Type</span>
+                <span class="detail-value">{{ selectedViolation.vehicle_type | titlecase }}</span>
+              </div>
+            </div>
+            
+            <div class="detail-card">
+              <div class="detail-icon">🎯</div>
+              <div class="detail-content">
+                <span class="detail-label">Confidence</span>
+                <span class="detail-value">{{ ((selectedViolation.confidence || 0) * 100) | number:'1.0-0' }}%</span>
+              </div>
+            </div>
+            
+            <div class="detail-card">
+              <div class="detail-icon">🏷️</div>
+              <div class="detail-content">
+                <span class="detail-label">Track ID</span>
+                <span class="detail-value">#{{ selectedViolation.track_id }}</span>
+              </div>
+            </div>
+            
+            <!-- Video/Frame Info -->
+            <div class="detail-card">
+              <div class="detail-icon">🎬</div>
+              <div class="detail-content">
+                <span class="detail-label">Video</span>
+                <span class="detail-value">{{ getVideoName(selectedViolation.video_id) }}</span>
+              </div>
+            </div>
+            
+            <div class="detail-card">
+              <div class="detail-icon">🎞️</div>
+              <div class="detail-content">
+                <span class="detail-label">Frame</span>
+                <span class="detail-value">#{{ selectedViolation.frame_number }}</span>
+              </div>
+            </div>
+            
+            <!-- Timestamps -->
+            <div class="detail-card wide">
+              <div class="detail-icon">🕐</div>
+              <div class="detail-content">
+                <span class="detail-label">Violation Time</span>
+                <span class="detail-value">{{ formatDate(selectedViolation.violation_timestamp) }}</span>
+              </div>
+            </div>
+            
+            <!-- Bounding Box -->
+            <div class="detail-card wide" *ngIf="selectedViolation.bbox">
+              <div class="detail-icon">📐</div>
+              <div class="detail-content">
+                <span class="detail-label">Bounding Box</span>
+                <span class="detail-value small">
+                  ({{ selectedViolation.bbox.x1 }}, {{ selectedViolation.bbox.y1 }}) → 
+                  ({{ selectedViolation.bbox.x2 }}, {{ selectedViolation.bbox.y2 }})
+                </span>
+              </div>
+            </div>
+          </div>
+          
+          <div class="modal-actions">
+            <button class="btn btn-danger" (click)="confirmDelete(selectedViolation); closeImageModal()">
+              🗑️ Delete Violation
+            </button>
+            <button class="btn btn-secondary" (click)="closeImageModal()">
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Confirmation Modal -->
+  <div class="modal-overlay" *ngIf="showDeleteConfirm" (click)="cancelDelete()">
+    <div class="modal-content confirm-modal" (click)="$event.stopPropagation()">
+      <h3>⚠️ Confirm Delete</h3>
+      <p>Are you sure you want to delete this violation record?</p>
+      <p class="warning">This action cannot be undone. The image file will also be deleted.</p>
+      
+      <div class="confirm-actions">
+        <button class="btn btn-secondary" (click)="cancelDelete()">Cancel</button>
+        <button class="btn btn-danger" (click)="executeDelete()">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>

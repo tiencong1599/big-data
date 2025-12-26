@@ -17,6 +17,7 @@ from handlers.analytics_handler import (
     AnalyticsSessionsHandler,
     AnalyticsExportHandler
 )
+from handlers.violation_handler import get_violation_handlers
 from models.video import init_db
 from config.settings import SERVER_PORT, ALLOWED_ORIGINS
 
@@ -51,6 +52,9 @@ class Application(tornado.web.Application):
             (r"/api/analytics/speeding", SpeedingVehiclesHandler),
             (r"/api/analytics/sessions", AnalyticsSessionsHandler),
             (r"/api/analytics/export", AnalyticsExportHandler),
+            
+            # Violation Capture endpoints (Speed Violation Stats Storage)
+            *get_violation_handlers(),
             
             # WebSocket handlers (new routing system)
             *get_websocket_handlers(),

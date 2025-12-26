@@ -131,6 +131,7 @@ services:
       REDIS_VIDEO_STREAM: video-frames
       REDIS_RESULT_STREAM: processed-frames
       VIDEO_STORAGE_PATH: /app/video_storage
+      VIOLATION_CAPTURES_DIR: /app/violation_captures
       AIRFLOW_API_URL: http://airflow-webserver:8080/api/v1
       AIRFLOW_USERNAME: admin
       AIRFLOW_PASSWORD: admin
@@ -138,6 +139,7 @@ services:
       ALLOWED_ORIGINS: http://localhost:4200,http://127.0.0.1:4200,http://localhost:80,http://127.0.0.1:80
     volumes:
       - video_storage:/app/video_storage
+      - violation_captures:/app/violation_captures
       - ./backend:/app
     networks:
       - video_streaming_network
@@ -174,6 +176,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -181,6 +185,10 @@ services:
       REDIS_OUTPUT_STREAM: processed-frames
       DEVICE: cuda:0  # GPU device
       ENABLE_VEHICLE_DETECTION: "true"
+      ENABLE_VIOLATION_CAPTURE: "true"
+      VIOLATION_CAPTURES_DIR: /app/violation_captures
+      SPEED_LIMIT: "60.0"
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/video_streaming
     security_opt:
       - seccomp:unconfined
     # GPU support using NVIDIA Container Toolkit
@@ -196,6 +204,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./spark:/app
+      - violation_captures:/app/violation_captures
 
   # Frontend
   frontend:
@@ -215,6 +224,7 @@ volumes:
   postgres_data:
   video_storage:
   redis_data:
+  violation_captures:
 
 networks:
   video_streaming_network:
