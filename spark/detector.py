@@ -22,6 +22,8 @@ class VehicleDetector:
                 self.engine_path = config.MODEL_FILE
             elif os.path.exists("yolov8n.engine"):
                 self.engine_path = "yolov8n.engine"
+            elif os.path.exists("yolov8s.engine"):
+                self.engine_path = "yolov8s.engine"
             else:
                 raise FileNotFoundError("Could not find .engine file in config or current dir")
         else:

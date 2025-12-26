@@ -1,0 +1,8 @@
+Clear data from /app/violations
+docker exec video_streaming_db psql -U postgres -d video_streaming -c "DELETE FROM violation_captures; SELECT COUNT(*) as remaining FROM violation_captures;"
+docker exec video_streaming_backend sh -c "rm -rf /app/violation_captures/* && ls -la /app/violation_captures/ && echo 'All violation capture images cleared'"
+
+Change model
+change model_name in entrypoint.sh
+
+if wanna build onnx again ==> run command: python transform_model.py --input <model_name>.pt --format onnx
