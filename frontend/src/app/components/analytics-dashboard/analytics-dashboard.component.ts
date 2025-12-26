@@ -216,4 +216,22 @@ export class AnalyticsDashboardComponent implements OnInit, OnDestroy {
     this.cacheService.clear();
     this.loadAnalytics();
   }
+
+  getSpeedDistributionValue(distribution: any, range: '60-70' | '70-80' | '80-90' | '90+'): number {
+    if (!distribution) return 0;
+    
+    // Handle both key formats
+    switch (range) {
+      case '60-70':
+        return distribution['range_60_70'] ?? distribution['60-70'] ?? 0;
+      case '70-80':
+        return distribution['range_70_80'] ?? distribution['70-80'] ?? 0;
+      case '80-90':
+        return distribution['range_80_90'] ?? distribution['80-90'] ?? 0;
+      case '90+':
+        return distribution['range_90_plus'] ?? distribution['90+'] ?? 0;
+      default:
+        return 0;
+    }
+  }
 }

@@ -100,30 +100,30 @@
                 <div class="bar-item">
                   <span class="bar-label">60-70 km/h</span>
                   <div class="bar-container">
-                    <div class="bar" [style.width.%]="(summary.speed_distribution.range_60_70 / summary.total_speeding_violations) * 100"></div>
+                    <div class="bar" [style.width.%]="(getSpeedDistributionValue(summary.speed_distribution, '60-70') / summary.total_speeding_violations) * 100"></div>
                   </div>
-                  <span class="bar-value">{{ summary.speed_distribution.range_60_70 }}</span>
+                  <span class="bar-value">{{ getSpeedDistributionValue(summary.speed_distribution, '60-70') }}</span>
                 </div>
                 <div class="bar-item">
                   <span class="bar-label">70-80 km/h</span>
                   <div class="bar-container">
-                    <div class="bar" [style.width.%]="(summary.speed_distribution.range_70_80 / summary.total_speeding_violations) * 100"></div>
+                    <div class="bar" [style.width.%]="(getSpeedDistributionValue(summary.speed_distribution, '70-80') / summary.total_speeding_violations) * 100"></div>
                   </div>
-                  <span class="bar-value">{{ summary.speed_distribution.range_70_80 }}</span>
+                  <span class="bar-value">{{ getSpeedDistributionValue(summary.speed_distribution, '70-80') }}</span>
                 </div>
                 <div class="bar-item">
                   <span class="bar-label">80-90 km/h</span>
                   <div class="bar-container">
-                    <div class="bar warning" [style.width.%]="(summary.speed_distribution.range_80_90 / summary.total_speeding_violations) * 100"></div>
+                    <div class="bar warning" [style.width.%]="(getSpeedDistributionValue(summary.speed_distribution, '80-90') / summary.total_speeding_violations) * 100"></div>
                   </div>
-                  <span class="bar-value">{{ summary.speed_distribution.range_80_90 }}</span>
+                  <span class="bar-value">{{ getSpeedDistributionValue(summary.speed_distribution, '80-90') }}</span>
                 </div>
                 <div class="bar-item">
                   <span class="bar-label">90+ km/h</span>
                   <div class="bar-container">
-                    <div class="bar danger" [style.width.%]="(summary.speed_distribution.range_90_plus / summary.total_speeding_violations) * 100"></div>
+                    <div class="bar danger" [style.width.%]="(getSpeedDistributionValue(summary.speed_distribution, '90+') / summary.total_speeding_violations) * 100"></div>
                   </div>
-                  <span class="bar-value">{{ summary.speed_distribution.range_90_plus }}</span>
+                  <span class="bar-value">{{ getSpeedDistributionValue(summary.speed_distribution, '90+') }}</span>
                 </div>
               </div>
             </div>
