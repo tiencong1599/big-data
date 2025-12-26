@@ -36,13 +36,14 @@ class ProducerHandler(tornado.web.RequestHandler):
             producer = VideoFrameProducer()
             
             try:
-                # Stream video to Kafka (this is a blocking operation)
-                producer.stream_video(video_id, video_path)
+                # Stream video to Redis (this is a blocking operation)
+                total_frames = producer.stream_video(video_id, video_path)
                 
-                logger.info(f"Finished streaming video {video_id}")
+                logger.info(f"Finished streaming video {video_id}, total frames: {total_frames}")
                 self.write({
                     'message': 'Video streaming completed',
-                    'video_id': video_id
+                    'video_id': video_id,
+                    'total_frames': total_frames
                 })
                 
             except Exception as e:

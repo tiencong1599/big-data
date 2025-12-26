@@ -78,6 +78,9 @@ class VideoFrameProducer:
         cap.release()
         print(f"[REDIS-PRODUCER] Completed video stream for video {video_id}, total frames: {frame_number}")
         print(f"[REDIS-PRODUCER] Stream '{REDIS_VIDEO_STREAM}' length: {self.redis_client.xlen(REDIS_VIDEO_STREAM)}")
+        
+        # Return total frames for tracking
+        return frame_number
     
     def close(self):
         self.redis_client.close()

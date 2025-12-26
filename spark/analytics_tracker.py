@@ -24,35 +24,40 @@ class VehicleAnalyticsTracker:
         
         print(f"[ANALYTICS] Tracker initialized for video {video_id}")
     
-    def update(self, tracks, frame_timestamp):
-        """
-        Update analytics based on current frame tracks
+    def _write_to_redis(self):
+        """Write current metrics to Redis (in-memory cache)"""
+        metrics = {
+            'video_id': self.video_id,
+            'total_vehicles_count': self.total_vehicles_entered,
+            'current_vehicles_count': len(self.current_vehicles_in_roi),
+            'updated_at': time.time()
+        }
         
-        Args:
-            tracks: List of (track_id, bbox) tuples from tracker
-            frame_timestamp: Current frame timestamp (seconds)
-        """
+        self.redis.set(
+            self.redis_key,
+            json.dumps(metrics),
+            ex=86400  # Expire after 24 hours
+        )
+    
+    def update(self, tracks, frame_timestamp):
+        """Update analytics with current frame tracks"""
         current_track_ids = {track_id for track_id, _ in tracks}
         
-        # Detect NEW vehicles entering ROI
+        # Detect new vehicles entering ROI
         new_vehicles = current_track_ids - self.current_vehicles_in_roi
+        
         for track_id in new_vehicles:
             self.total_vehicles_entered += 1
             self.vehicle_enter_times[track_id] = frame_timestamp
-            print(f"[ANALYTICS] Vehicle {track_id} entered ROI (total: {self.total_vehicles_entered})")
+            self.current_vehicles_in_roi.add(track_id)
         
-        # Detect vehicles LEAVING ROI
-        left_vehicles = self.current_vehicles_in_roi - current_track_ids
-        for track_id in left_vehicles:
-            if track_id in self.vehicle_enter_times:
-                dwell_time = frame_timestamp - self.vehicle_enter_times[track_id]
-                self._record_vehicle_exit(track_id, dwell_time)
-                del self.vehicle_enter_times[track_id]
+        # Detect vehicles exiting ROI
+        exited_vehicles = self.current_vehicles_in_roi - current_track_ids
+        for track_id in exited_vehicles:
+            self.current_vehicles_in_roi.discard(track_id)
+            self.vehicle_enter_times.pop(track_id, None)
         
-        # Update current vehicles in ROI
-        self.current_vehicles_in_roi = current_track_ids
-        
-        # Write to Redis (lightweight metrics)
+        # Write to Redis on EVERY update (ensures final count is always saved)
         self._write_to_redis()
     
     def set_vehicle_type(self, track_id: int, class_id: int):
@@ -84,21 +89,6 @@ class VehicleAnalyticsTracker:
         )
         
         print(f"[ANALYTICS] Vehicle {track_id} exited ROI (dwell: {dwell_time:.1f}s, type: {vehicle_type})")
-    
-    def _write_to_redis(self):
-        """Write current metrics to Redis (in-memory cache)"""
-        metrics = {
-            'video_id': self.video_id,
-            'total_vehicles_count': self.total_vehicles_entered,
-            'current_vehicles_count': len(self.current_vehicles_in_roi),
-            'updated_at': time.time()
-        }
-        
-        self.redis.set(
-            self.redis_key,
-            json.dumps(metrics),
-            ex=86400  # Expire after 24 hours
-        )
     
     def get_current_metrics(self):
         """Get current analytics metrics for this frame"""

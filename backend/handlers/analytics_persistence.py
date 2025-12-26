@@ -189,8 +189,37 @@ class AnalyticsPersistenceHandler:
             # Flush any remaining buffered vehicles
             await self._flush_speeding_vehicles(video_id)
             
-            # Create summary (optional - can be done by Airflow cleanup task)
-            # await self._create_session_summary(video_id)
+            # Try to get final count from Redis and save a final snapshot
+            try:
+                import redis, os, time
+                redis_client = redis.Redis(
+                    host=os.getenv('REDIS_HOST', 'localhost'),
+                    port=int(os.getenv('REDIS_PORT', 6379)),
+                    decode_responses=True
+                )
+                redis_key = f"analytics:video:{video_id}"
+                redis_data = redis_client.get(redis_key)
+                
+                if redis_data:
+                    redis_metrics = json.loads(redis_data)
+                    final_total = redis_metrics.get('total_vehicles_count', 0)
+                    current_in_roi = redis_metrics.get('current_vehicles_count', 0)
+                    
+                    # Save a final snapshot with the most up-to-date count
+                    final_snapshot = VideoAnalyticsSnapshot(
+                        video_id=video_id,
+                        frame_number=999999,  # Special marker for final snapshot
+                        timestamp=time.time(),
+                        total_vehicles=final_total,
+                        speeding_count=0,
+                        current_in_roi=current_in_roi,
+                        session_start=self.session_start_times.get(video_id)
+                    )
+                    await asyncio.to_thread(self._save_snapshot, final_snapshot)
+                    logger.info(f"Saved final snapshot with total_vehicles={final_total}")
+                    
+            except Exception as e:
+                logger.warning(f"Could not save final snapshot from Redis: {e}")
             
             # Cleanup session state
             self.last_snapshot_time.pop(video_id, None)
