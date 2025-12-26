@@ -59,7 +59,8 @@ def cleanup_and_summarize(**context):
     Clean up Redis cache and create analytics summary
     Called after video processing completes
     """
-    import sys
+    import sys, os
+    os.environ['DATABASE_URL'] = 'postgresql://postgres:postgres@postgres:5432/video_streaming'
     sys.path.insert(0, '/opt/airflow/backend')
     
     from models.video import get_db, VideoAnalyticsSummary, VideoAnalyticsSnapshot, SpeedingVehicle
